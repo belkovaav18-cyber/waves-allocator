@@ -1,68 +1,38 @@
-def normalize_rooms(rooms_df):
-
-    # DataFrame
-    if hasattr(rooms_df, "to_dict"):
-        return rooms_df.to_dict("records")
-
-    # already list
-    if isinstance(rooms_df, list):
-        return rooms_df
-
-    return []
+def max_room_capacity(rooms):
+    return max(int(r["вместимость"]) for r in rooms)
 
 
-# =========================================================
-# MAX CAPACITY
-# =========================================================
-def max_room_capacity(rooms_df):
+def find_impossible_groups(guests, rooms):
 
-    rooms = normalize_rooms(rooms_df)
-
-    return max(int(r.get("вместимость", 0)) for r in rooms)
-
-
-# =========================================================
-# CHECK IMPOSSIBLE GROUPS
-# =========================================================
-def find_impossible_groups(guests_df, rooms_df):
-
-    rooms = normalize_rooms(rooms_df)
-    max_cap = max(int(r.get("вместимость", 0)) for r in rooms)
-
+    max_cap = max_room_capacity(rooms)
     problems = []
 
-    for g in guests_df:
-
+    for g in guests:
         group = g.get("group_hard", [])
-        total = len(group) + 1
+        size = len(group) + 1
 
-        if total > max_cap:
+        if size > max_cap:
             problems.append({
-                "fio": g.get("fio"),
-                "group_size": total,
+                "fio": g["fio"],
+                "group_size": size,
                 "max_room": max_cap
             })
 
     return problems
 
 
-# =========================================================
-# SPLIT LARGE GROUPS
-# =========================================================
-def split_groups(guests_df, rooms_df):
+def split_groups(guests, rooms):
 
-    rooms = normalize_rooms(rooms_df)
-    max_cap = max(int(r.get("вместимость", 0)) for r in rooms)
+    max_cap = max_room_capacity(rooms)
+    result = []
 
-    new_guests = []
-
-    for g in guests_df:
+    for g in guests:
 
         group = g.get("group_hard", [])
-        full = [g.get("fio")] + group
+        full = [g["fio"]] + group
 
         if len(full) <= max_cap:
-            new_guests.append(g)
+            result.append(g)
             continue
 
         chunks = [
@@ -70,32 +40,27 @@ def split_groups(guests_df, rooms_df):
             for i in range(0, len(full), max_cap)
         ]
 
-        for chunk in chunks:
+        for c in chunks:
             new_g = g.copy()
-            new_g["fio"] = chunk[0]
-            new_g["group_hard"] = chunk[1:]
-            new_guests.append(new_g)
+            new_g["fio"] = c[0]
+            new_g["group_hard"] = c[1:]
+            result.append(new_g)
 
-    return new_guests
+    return result
 
 
-# =========================================================
-# EXPLANATION
-# =========================================================
-def explain_fail(guests_df, rooms_df):
+def explain_fail(guests, rooms):
 
-    rooms = normalize_rooms(rooms_df)
-
-    max_cap = max(int(r.get("вместимость", 0)) for r in rooms)
-
+    max_cap = max_room_capacity(rooms)
     reasons = []
 
-    for g in guests_df:
+    for g in guests:
+        if len(g.get("nights", [])) == 0:
+            reasons.append((g["fio"], "нет выбранных ночей"))
+            continue
 
-        if not g.get("nights"):
-            reasons.append((g.get("fio"), "нет выбранных ночей"))
-
-        elif len(g.get("group_hard", [])) + 1 > max_cap:
-            reasons.append((g.get("fio"), "группа не помещается"))
+        if len(g.get("group_hard", [])) + 1 > max_cap:
+            reasons.append((g["fio"], "группа не помещается"))
+            continue
 
     return reasons
