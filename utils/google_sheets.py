@@ -5,7 +5,7 @@ from google.oauth2.service_account import Credentials
 
 
 SPREADSHEET_ID = "10cBNkDQ3fOCajBIjeAsaCPsivEfVShGZ-BHmLcC6l5s"
-SHEET_NAME = "регистрация"
+SHEET_NAME = "Лист1"
 
 
 def load_guests_from_gsheet():
