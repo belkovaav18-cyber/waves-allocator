@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 
-from allocator import allocate_rooms
+from allocator import allocate_rooms, build_room_stats
 from preprocess import preprocess_guests
 from utils.google_sheets import (
     load_guests_from_gsheet,
@@ -47,9 +47,11 @@ if "rejections" not in st.session_state:
 if st.button("Авторасселение"):
 
     allocations, rejections = allocate_rooms(
-        guests.to_dict("records"),
-        rooms.to_dict("records")
-    )
+      guests.to_dict("records"),
+      rooms.to_dict("records")
+  )
+
+room_stats = build_room_stats(allocations, rooms)
 
     st.session_state.allocations = allocations
     st.session_state.rejections = rejections
@@ -95,3 +97,8 @@ if st.session_state.rejections is not None:
 if st.session_state.allocations is not None:
     st.subheader("Последнее расселение")
     st.dataframe(st.session_state.allocations)
+    st.subheader("🏨 Загруженность комнат")
+
+    st.dataframe(room_stats)
+
+    st.bar_chart(room_stats.set_index("room_id")["occupied"])
