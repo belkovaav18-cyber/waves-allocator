@@ -37,11 +37,15 @@ def solve(guests, rooms):
         for r in R:
             x[g, r] = model.NewBoolVar(f"x_{g}_{r}")
 
-    # one room per guest
+    # -------------------------
+    # ONE ROOM
+    # -------------------------
     for g in G:
         model.Add(sum(x[g, r] for r in R) == 1)
 
-    # capacity
+    # -------------------------
+    # CAPACITY
+    # -------------------------
     for r in R:
         cap = int(rooms[r]["вместимость"])
         model.Add(sum(x[g, r] for g in G) <= cap)
@@ -55,7 +59,6 @@ def solve(guests, rooms):
         for g2 in range(g1 + 1, len(guests)):
 
             cost = conflict_cost(guests[g1], guests[g2])
-
             if cost == 0:
                 continue
 
@@ -69,40 +72,42 @@ def solve(guests, rooms):
                 objective.append(cost * p)
 
     # =====================================================
-    # SOFT GROUP (BONUS)
+    # SOFT GROUPS
     # =====================================================
     for g in G:
-        for other in guests[g].get("group_soft", []):
+        for other_fio in guests[g].get("group_soft", []):
 
-            if other not in guests:
-                continue
+            for h in G:
+                if guests[h]["fio"] != other_fio:
+                    continue
 
-            for r in R:
-                t = model.NewBoolVar(f"soft_{g}_{other}_{r}")
+                for r in R:
+                    t = model.NewBoolVar(f"soft_{g}_{h}_{r}")
 
-                model.Add(t <= x[g, r])
-                model.Add(t <= x[other, r])
-                model.Add(t >= x[g, r] + x[other, r] - 1)
+                    model.Add(t <= x[g, r])
+                    model.Add(t <= x[h, r])
+                    model.Add(t >= x[g, r] + x[h, r] - 1)
 
-                objective.append(-30 * t)
+                    objective.append(-30 * t)
 
     # =====================================================
-    # AVOID GROUP (PENALTY)
+    # AVOID GROUPS
     # =====================================================
     for g in G:
-        for other in guests[g].get("group_avoid", []):
+        for other_fio in guests[g].get("group_avoid", []):
 
-            if other not in guests:
-                continue
+            for h in G:
+                if guests[h]["fio"] != other_fio:
+                    continue
 
-            for r in R:
-                t = model.NewBoolVar(f"avoid_{g}_{other}_{r}")
+                for r in R:
+                    t = model.NewBoolVar(f"avoid_{g}_{h}_{r}")
 
-                model.Add(t <= x[g, r])
-                model.Add(t <= x[other, r])
-                model.Add(t >= x[g, r] + x[other, r] - 1)
+                    model.Add(t <= x[g, r])
+                    model.Add(t <= x[h, r])
+                    model.Add(t >= x[g, r] + x[h, r] - 1)
 
-                objective.append(100 * t)
+                    objective.append(100 * t)
 
     # =====================================================
     # ROOM TYPE CONSTRAINT
@@ -115,7 +120,6 @@ def solve(guests, rooms):
 
         for r in R:
             cap = int(rooms[r]["вместимость"])
-
             if cap != req:
                 model.Add(x[g, r] == 0)
 
