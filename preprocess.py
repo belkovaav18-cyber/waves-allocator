@@ -1,80 +1,83 @@
 import pandas as pd
-from datetime import datetime
+import re
 
 
-def detect_gender(name):
-    if pd.isna(name):
+NIGHT_MAP = {
+    "31 мая": 31,
+    "1 июня": 32,
+    "2 июня": 33,
+    "3 июня": 34,
+    "4 июня": 35,
+    "5 июня": 36,
+}
+
+
+def detect_gender(fio: str):
+    if not fio:
         return "M"
-
-    name = str(name).strip().lower()
-    return "F" if name.endswith(("а", "я")) else "M"
-
-
-def calculate_age(birthdate):
-    if pd.isna(birthdate):
-        return None
-
-    today = datetime.today()
-
-    return (
-        today.year
-        - birthdate.year
-        - ((today.month, today.day) < (birthdate.month, birthdate.day))
-    )
+    fio = fio.strip().lower()
+    return "F" if fio.split()[0].endswith(("а", "я")) else "M"
 
 
-def detect_city(row):
-    city = row.get("Город")
-    if pd.isna(city):
-        return "UNKNOWN"
-    return str(city).strip()
-
-
-def detect_status(row):
-    status = row.get("Должность") or row.get("Статус")
-
-    if pd.isna(status):
+def detect_status(text: str):
+    if not text:
         return "student"
-
-    status = str(status).lower()
-    if "проф" in status or "prof" in status:
+    t = str(text).lower()
+    if "проф" in t:
         return "professor"
-
     return "student"
 
 
-def detect_family(row):
-    last = str(row.get("Фамилия", "")).strip().lower()
-    if not last:
-        return None
-    return last
+def extract_nights(row):
+    """
+    Берём все колонки вида:
+    '31 мая / Комната (ночь ...)'
+    """
+    nights = []
+
+    for col, val in row.items():
+        if not isinstance(col, str):
+            continue
+
+        if "Комната" not in col:
+            continue
+
+        if pd.isna(val):
+            continue
+
+        for key, day in NIGHT_MAP.items():
+            if key in col:
+                nights.append(day)
+
+    return sorted(set(nights))
 
 
-def preprocess_guests(df):
+def preprocess_guests(df: pd.DataFrame):
+
     df = df.copy()
 
-    df = df[df["Заезд"].notna()].copy()
+    processed = []
 
-    processed = pd.DataFrame()
+    for _, row in df.iterrows():
 
-    processed["fio"] = (
-        df["Фамилия"].fillna("") + " " +
-        df["Имя"].fillna("") + " " +
-        df["Отчество"].fillna("")
-    ).str.strip()
+        fio = row.get("ФИО")
+        if pd.isna(fio):
+            continue
 
-    processed["gender"] = df["Имя"].apply(detect_gender)
+        nights = extract_nights(row)
 
-    processed["birthdate"] = pd.to_datetime(df["Дата рождения"], errors="coerce")
-    processed["age"] = processed["birthdate"].apply(calculate_age)
+        if not nights:
+            continue
 
-    processed["checkin"] = pd.to_datetime(df["Заезд"], errors="coerce")
-    processed["checkout"] = pd.to_datetime(df["Отъезд"], errors="coerce")
+        processed.append({
+            "id": row.get("ID"),
+            "fio": fio,
+            "gender": detect_gender(fio),
+            "status": detect_status(row.get("Статус") or row.get("Должность")),
+            "city": str(row.get("Город", "UNKNOWN")),
+            "nights": nights,
+            "age": None,  # если появится дата рождения — легко добавить
+            "raw": row.to_dict()
+        })
 
-    processed["nights"] = pd.to_numeric(df["Ночей"], errors="coerce").fillna(0).astype(int)
-
-    processed["city"] = df.apply(detect_city, axis=1)
-    processed["status"] = df.apply(detect_status, axis=1)
-    processed["family_id"] = df.apply(detect_family, axis=1)
-
-    return processed
+    return pd.DataFrame(processed)
