@@ -1,187 +1,92 @@
 import pandas as pd
 import re
 
-# если у тебя есть comment_engine — оставляем
-try:
-    from comment_engine import parse_comment
-except:
-    parse_comment = None
 
-
-# =========================================================
-# CLEAN COLUMNS
-# =========================================================
-def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
+def normalize_columns(df):
     df = df.copy()
-
     df.columns = (
-        df.columns
-        .astype(str)
-        .str.replace("\n", " ", regex=False)
+        df.columns.astype(str)
         .str.replace("\ufeff", "", regex=False)
+        .str.replace("\n", " ", regex=False)
         .str.strip()
     )
-
     return df
 
 
-# =========================================================
-# SAFE STRING NORMALIZE
-# =========================================================
-def norm(x):
-    return re.sub(r"\s+", " ", str(x).strip().lower())
-
-
-# =========================================================
-# GENDER
-# =========================================================
-def detect_gender(fio: str) -> str:
+def detect_gender(fio):
     parts = str(fio).split()
     if not parts:
         return "M"
-
     return "F" if parts[0].lower().endswith(("а", "я")) else "M"
 
 
-# =========================================================
-# NIGHTS EXTRACTION
-# =========================================================
+def parse_resident(x):
+    if pd.isna(x):
+        return True
+    x = str(x).lower()
+    return not ("не буду" in x or "не прожива" in x)
+
+
 def extract_nights(row):
     nights = []
-
     for col in row.index:
-        col_str = str(col).lower()
+        if "ночь" not in str(col).lower():
+            continue
         val = row[col]
-
         if pd.isna(val):
             continue
-
-        val = str(val).strip().lower()
-
-        if "комната" not in col_str:
+        if str(val).strip().lower() in ["нет", "0", "-", "false", ""]:
             continue
 
-        if val in ["", "нет", "0", "-", "false"]:
-            continue
-
-        match = re.search(r"ночь на (\d+)", col_str)
-        if match:
-            nights.append(int(match.group(1)))
+        m = re.search(r"(\d+)", str(col))
+        if m:
+            nights.append(int(m.group(1)))
 
     return sorted(set(nights))
 
 
-# =========================================================
-# RESIDENT PARSING
-# =========================================================
-def parse_resident(value):
-    if pd.isna(value):
-        return True
-
-    v = str(value).strip().lower()
-
-    # ВСЕ возможные варианты "не проживает"
-    if any(x in v for x in [
-        "не буду проживать",
-        "не прожива",
-        "не проживает",
-        "no stay"
-    ]):
-        return False
-
-    return True
+# ---------------- SAFE COMMENT PARSER (TEMP STUB) ----------------
+def parse_comment_safe(comment):
+    return {
+        "hard_group": [],
+        "soft_group": [],
+        "avoid_group": [],
+        "room_type": None
+    }
 
 
-# =========================================================
-# COMMENT ENGINE SAFE WRAPPER
-# =========================================================
-def safe_parse_comments(df, fio_list):
-    """
-    возвращает структуру:
-    [
-      {
-        hard_group: [],
-        soft_group: [],
-        avoid_group: [],
-        room_type: ...
-      }
-    ]
-    """
-
-    results = []
-
-    for c in df["Комментарий"].fillna(""):
-        if parse_comment is None:
-            results.append({
-                "hard_group": [],
-                "soft_group": [],
-                "avoid_group": [],
-                "room_type": None
-            })
-        else:
-            try:
-                results.append(parse_comment(c, fio_list))
-            except:
-                results.append({
-                    "hard_group": [],
-                    "soft_group": [],
-                    "avoid_group": [],
-                    "room_type": None
-                })
-
-    return results
-
-
-# =========================================================
-# MAIN
-# =========================================================
-def preprocess_guests(df: pd.DataFrame) -> pd.DataFrame:
+def preprocess_guests(df):
 
     df = normalize_columns(df)
-    df = df.copy()
+
+    # ---------------- SAFE COLUMN ACCESS ----------------
+    def col(name, default=None):
+        return df[name] if name in df.columns else pd.Series([default] * len(df))
+
+    fio = col("ФИО", "")
 
     processed = pd.DataFrame()
+    processed["fio"] = fio
+    processed["gender"] = fio.apply(detect_gender)
 
-    # -------------------------
-    # FIO (гарантия)
-    # -------------------------
-    processed["fio"] = df.get("ФИО", "").fillna("").astype(str)
+    processed["city"] = col("Город", "UNKNOWN")
+    processed["status"] = col("Статус", "student")
 
-    # -------------------------
-    # RESIDENT FLAG
-    # -------------------------
-    processed["resident"] = df.get(
-        "Выбор тарифа за проживание",
-        ""
-    ).apply(parse_resident)
+    processed["resident"] = col("Выбор тарифа за проживание", "").apply(parse_resident)
 
-    # -------------------------
-    # META
-    # -------------------------
-    processed["gender"] = processed["fio"].apply(detect_gender)
-
-    processed["city"] = df.get("Город", "UNKNOWN")
-    processed["status"] = df.get("Статус", "student")
-
-    processed["comment"] = df.get("Комментарий", "")
-
-    # -------------------------
-    # NIGHTS
-    # -------------------------
     processed["nights"] = df.apply(extract_nights, axis=1)
 
-    # ❗ нерезиденты не живут
-    processed.loc[~processed["resident"], "nights"] = processed.loc[~processed["resident"], "nights"].apply(lambda _: [])
+    # IMPORTANT: no crashes
+    comments = col("Комментарий", "").fillna("")
 
-    # -------------------------
-    # COMMENT ENGINE
-    # -------------------------
-    fio_list = processed["fio"].tolist()
-    parsed = safe_parse_comments(df, fio_list)
+    parsed = comments.apply(parse_comment_safe)
 
-    processed["group_hard"] = [p["hard_group"] for p in parsed]
-    processed["group_soft"] = [p["soft_group"] for p in parsed]
-    processed["group_avoid"] = [p["avoid_group"] for p in parsed]
-    processed["room_type"] = [p["room_type"] for p in parsed]
+    processed["group_hard"] = parsed.apply(lambda x: x["hard_group"])
+    processed["group_soft"] = parsed.apply(lambda x: x["soft_group"])
+    processed["group_avoid"] = parsed.apply(lambda x: x["avoid_group"])
+    processed["room_type"] = parsed.apply(lambda x: x["room_type"])
+
+    # non-residents
+    processed.loc[~processed["resident"], "nights"] = [[] for _ in range(len(processed))]
 
     return processed
