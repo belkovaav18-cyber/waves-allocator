@@ -4,9 +4,7 @@ from allocator import allocate_rooms
 
 from preprocess import preprocess_guests
 
-from utils.excel_loader import (
-    load_rooms
-)
+
 from utils.google_sheets import load_guests_from_gsheet
 st.set_page_config(
     page_title="Система расселения",
@@ -15,9 +13,7 @@ st.set_page_config(
 
 st.title("Система расселения")
 
-rooms = load_rooms(
-    "data/rooms.xlsx"
-)
+rooms = pd.read_excel("data/rooms.xlsx", engine="openpyxl")
 
 raw_guests = load_guests_from_gsheet()
 
