@@ -1,91 +1,141 @@
-from ortools.sat.python import cp_model
+import pandas as pd
 
 
-def optimize_allocation(guests, rooms):
+def allocate_rooms(guests_df, rooms_df):
 
-    model = cp_model.CpModel()
+    allocations = []
+    occupancy = {}
 
-    x = {}
+    # =========================
+    # INIT ROOMS
+    # =========================
+    for _, room in rooms_df.iterrows():
 
-    G = len(guests)
-    R = len(rooms)
+        occupancy[room["room_id"]] = {
+            "capacity": room["вместимость"],
+            "guests": [],
+            "gender": None,
+            "cities": set(),
+            "has_senior": False
+        }
 
-    # =====================
-    # VARIABLES
-    # =====================
-    for g in range(G):
-        for r in range(R):
-            x[(g, r)] = model.NewBoolVar(f"x_{g}_{r}")
+    # =========================
+    # SORT PRIORITY
+    # 1. seniors first
+    # 2. families
+    # 3. older first
+    # =========================
+    def priority(g):
 
-    # =====================
-    # 1. каждый гость в 1 комнате
-    # =====================
-    for g in range(G):
-        model.Add(sum(x[(g, r)] for r in range(R)) == 1)
+        is_senior = 1 if g.get("status") == "professor" else 0
+        family = g.get("family_id", "")
+        age = g.get("age", 0)
 
-    # =====================
-    # 2. вместимость
-    # =====================
-    for r in range(R):
-        model.Add(
-            sum(x[(g, r)] for g in range(G)) <= int(rooms[r]["capacity"])
-        )
+        return (-is_senior, family, -age)
 
-    # =====================
-    # 3. семьи вместе (safe version)
-    # =====================
-    for i in range(G):
-        for j in range(i + 1, G):
+    guests_df = guests_df.sort_values(
+        by="age",
+        ascending=False,
+        na_position="last"
+    )
 
-            fam_i = guests[i].get("family_id")
-            fam_j = guests[j].get("family_id")
+    # =========================
+    # MAIN LOOP
+    # =========================
+    for _, guest in guests_df.iterrows():
 
-            if fam_i is not None and fam_i == fam_j:
+        fio = guest["fio"]
+        gender = guest["gender"]
+        age = guest.get("age")
+        city = guest.get("city", None)
+        status = guest.get("status", "student")
+        family = guest.get("family_id")
 
-                for r in range(R):
-                    model.Add(x[(i, r)] == x[(j, r)])
+        allocated = False
 
-    # =====================
-    # 4. objective: minimize unused space (soft)
-    # =====================
-    unused = []
+        for room_id, room in occupancy.items():
 
-    for r in range(R):
+            current = room["guests"]
+            capacity = room["capacity"]
 
-        used = model.NewIntVar(0, G, f"used_{r}")
+            # -------------------------
+            # 1. capacity check
+            # -------------------------
+            if len(current) >= capacity:
+                continue
 
-        model.Add(
-            used == sum(x[(g, r)] for g in range(G))
-        )
+            # -------------------------
+            # 2. SENIOR RULE
+            # -------------------------
+            if status == "professor" and len(current) > 0:
+                continue
 
-        capacity = int(rooms[r]["capacity"])
+            # -------------------------
+            # 3. FAMILY RULE (must stay together)
+            # -------------------------
+            if family:
+                family_in_room = any(
+                    g.get("family_id") == family
+                    for g in current
+                )
+                if family_in_room or len(current) > 0:
+                    # только в ту комнату где уже семья
+                    pass
+                else:
+                    # если комната не пустая — нельзя
+                    if len(current) > 0:
+                        continue
 
-        slack = model.NewIntVar(0, capacity, f"slack_{r}")
+            # -------------------------
+            # 4. CITY RULE
+            # -------------------------
+            if city:
 
-        model.Add(slack == capacity - used)
+                # если уже есть другой город → можно, но осторожно
+                if len(room["cities"]) > 0 and city not in room["cities"]:
+                    continue
 
-        unused.append(slack)
+                # конфликт: если в комнате есть senior → нельзя студенту из того же города
+                if room["has_senior"] and status == "student":
+                    continue
 
-    model.Minimize(sum(unused))
+            # -------------------------
+            # 5. ASSIGN
+            # -------------------------
+            current.append({
+                "fio": fio,
+                "gender": gender,
+                "age": age,
+                "city": city,
+                "status": status,
+                "family_id": family
+            })
 
-    # =====================
-    # SOLVE
-    # =====================
-    solver = cp_model.CpSolver()
-    status = solver.Solve(model)
+            room["cities"].add(city)
 
-    result = []
+            if status == "professor":
+                room["has_senior"] = True
 
-    if status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+            room["gender"] = gender
 
-        for g in range(G):
-            for r in range(R):
+            allocations.append({
+                "fio": fio,
+                "gender": gender,
+                "age": age,
+                "city": city,
+                "room": room_id
+            })
 
-                if solver.Value(x[(g, r)]) == 1:
+            allocated = True
+            break
 
-                    result.append({
-                        "fio": guests[g]["fio"],
-                        "room": rooms[r]["room_id"]
-                    })
+        if not allocated:
+            allocations.append({
+                "fio": fio,
+                "gender": gender,
+                "age": age,
+                "city": city,
+                "room": "NO ROOM"
+            })
 
-    return result
+    return pd.DataFrame(allocations)
