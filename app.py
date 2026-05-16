@@ -36,44 +36,21 @@ st.dataframe(guests_df)
 # =========================================================
 if st.button("🚀 Расселить"):
 
-    # safe call
     result, debug = smart_solve(
-        guests_for_solver.to_dict("records"),
+        guests_df.to_dict("records"),
         rooms
     )
 
-    # =====================================================
-    # fallback safety
-    # =====================================================
-    if result is None:
-        result = pd.DataFrame(columns=["fio", "room_id"])
+    non_res = guests_df[~guests_df["resident"]].copy()
+    non_res["room_id"] = "не проживает"
 
-    # =====================================================
-    # NON-RESIDENTS
-    # =====================================================
-    non_residents_result = non_residents.copy()
-    non_residents_result["room_id"] = "не проживает"
+    final_result = pd.concat([
+        result,
+        non_res[["fio", "room_id"]]
+    ], ignore_index=True)
 
-    # keep only needed columns safely
-    non_residents_result = non_residents_result[["fio", "room_id"]]
-
-    # =====================================================
-    # FINAL MERGE
-    # =====================================================
-    final_result = pd.concat([result, non_residents_result], ignore_index=True)
-
-    # =====================================================
-    # UI
-    # =====================================================
-    st.subheader("Result")
     st.dataframe(final_result)
 
-    st.subheader("Debug")
-    st.json(debug)
-
-    # =====================================================
-    # SAVE
-    # =====================================================
     save_results(SHEET_ID, "Result", final_result)
 
     st.success("Готово")
