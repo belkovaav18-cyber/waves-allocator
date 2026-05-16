@@ -2,25 +2,41 @@ import pandas as pd
 from collections import defaultdict
 
 
+# -------------------------
+# convert date safely
+# -------------------------
+def to_day(x):
+    if pd.isna(x):
+        return None
+    if isinstance(x, pd.Timestamp):
+        return x.day
+    try:
+        return int(x)
+    except:
+        return None
+
+
 def allocate_rooms(guests_df, rooms_df):
 
     allocations = []
-    reasons = []
+    rejections = []
 
     # -------------------------
-    # rooms (list[dict] ВМЕСТО DataFrame)
+    # rooms state
     # -------------------------
     rooms = {}
 
-    for r in rooms_df:   # ❗ FIX HERE
-
+    for r in rooms_df:
         rooms[r["room_id"]] = {
             "capacity": int(r["вместимость"]),
             "calendar": defaultdict(list),
+            "gender": None,
+            "cities": set(),
+            "families": set(),
         }
 
     # -------------------------
-    # sort
+    # sort priority
     # -------------------------
     guests_df = sorted(
         guests_df,
@@ -37,27 +53,40 @@ def allocate_rooms(guests_df, rooms_df):
                 return False
         return True
 
-    def add(room, guest, start, end):
+    def add(room, g, start, end):
         for d in range(start, end + 1):
-            room["calendar"][d].append(guest)
+            room["calendar"][d].append(g)
 
+        room["cities"].add(g.get("city"))
+        room["families"].add(g.get("family_id"))
+
+    # -------------------------
+    # main loop
     # -------------------------
     for g in guests_df:
 
-        start = g.get("checkin")
-        end = g.get("checkout")
+        start = to_day(g.get("checkin"))
+        end = to_day(g.get("checkout"))
 
-# convert pandas Timestamp → int day
-        if hasattr(start, "day"):
-            start = start.day
-        if hasattr(end, "day"):
-            end = end.day
+        if start is None or end is None:
+            rejections.append({
+                "fio": g["fio"],
+                "reasons": ["нет дат заезда/выезда"]
+            })
+            continue
 
         placed = False
+        reasons = []
 
         for room_id, room in rooms.items():
 
             if is_free(room, start, end):
+
+                # soft rule: gender mix penalty
+                if room["gender"] and room["gender"] != g["gender"]:
+                    reasons.append("разный пол в комнате")
+
+                room["gender"] = g["gender"]
 
                 add(room, g, start, end)
 
@@ -72,6 +101,10 @@ def allocate_rooms(guests_df, rooms_df):
                 break
 
         if not placed:
+            rejections.append({
+                "fio": g["fio"],
+                "reasons": ["нет свободной комнаты на даты"]
+            })
 
             allocations.append({
                 "fio": g["fio"],
@@ -80,31 +113,28 @@ def allocate_rooms(guests_df, rooms_df):
                 "checkout": end
             })
 
-            reasons.append({
-                "fio": g["fio"],
-                "reason": "нет свободной комнаты"
-            })
+    return pd.DataFrame(allocations), pd.DataFrame(rejections), rooms
 
-    return pd.DataFrame(allocations), pd.DataFrame(reasons), rooms
 
-# =========================
-# ROOM STATS (ВАЖНО: ВНЕ ФУНКЦИИ allocate_rooms)
-# =========================
+# -------------------------
+# ROOM STATS
+# -------------------------
 def build_room_stats(room_state):
 
     result = []
 
     for room_id, room in room_state.items():
 
-        total_people = set()
+        people = set()
 
         for day, guests in room["calendar"].items():
             for g in guests:
-                total_people.add(g["fio"])
+                people.add(g["fio"])
 
         result.append({
             "room_id": room_id,
-            "people_count": len(total_people)
+            "people_count": len(people),
+            "capacity": room["capacity"]
         })
 
     return pd.DataFrame(result)
