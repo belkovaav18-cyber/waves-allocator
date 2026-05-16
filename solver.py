@@ -2,7 +2,8 @@ from ortools.sat.python import cp_model
 import pandas as pd
 from config import WEIGHTS
 
-
+def norm_col(c):
+    return str(c).strip().lower()
 # =========================================================
 # COST
 # =========================================================
