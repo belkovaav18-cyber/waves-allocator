@@ -4,3 +4,4 @@ openpyxl
 gspread
 google-auth
 ortools
+ortools==9.8.3296
