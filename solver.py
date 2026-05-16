@@ -32,7 +32,9 @@ def solve(guests_df, rooms_df):
 
     # ❗ теперь уже ДАННЫЕ приходят как list[dict]
     guests = guests_df
-    rooms = rooms_df
+    rooms = []
+        for r in rooms_df:
+            rooms.append({k.strip().lower(): v for k, v in r.items()})
 
     G = range(len(guests))
     R = range(len(rooms))
