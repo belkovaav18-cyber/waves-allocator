@@ -5,9 +5,10 @@ from sheets import load_guests, save_results
 from preprocess import preprocess
 from solver import solve
 
+SHEET_ID = "1lF4SV24wTo5OwsidQ7UPqBVaGzdw_fBSx0OuBJJ4cWg"
 TAB = "Form Responses 1"
 
-raw = load_guests(TAB)
+raw = load_guests(SHEET_ID, TAB)
 
 
 
