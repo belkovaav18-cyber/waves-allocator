@@ -1,71 +1,58 @@
-import pandas as pd
+from ortools.sat.python import cp_model
 
 
-def allocate_rooms(guests_df, rooms_df):
+def optimize_allocation(guests, rooms):
 
-    allocations = []
+    model = cp_model.CpModel()
 
-    occupancy = {}
+    x = {}
 
-    for _, room in rooms_df.iterrows():
+    # переменные
+    for g in range(len(guests)):
+        for r in range(len(rooms)):
+            x[(g, r)] = model.NewBoolVar(f"x_{g}_{r}")
 
-        room_id = room["room_id"]
+    # 1. каждый гость в одной комнате
+    for g in range(len(guests)):
+        model.Add(sum(x[(g, r)] for r in range(len(rooms))) == 1)
 
-        occupancy[room_id] = {
-            "capacity": room["вместимость"],
-            "guests": [],
-            "gender": None
-        }
+    # 2. вместимость
+    for r in range(len(rooms)):
+        model.Add(
+            sum(x[(g, r)] for g in range(len(guests)))
+            <= rooms[r]["capacity"]
+        )
 
-    guests_df = guests_df.sort_values(
-        by="age",
-        ascending=False,
-        na_position="last"
-    )
+    # 3. семьи вместе (упрощённо по фамилии)
+    for i in range(len(guests)):
+        for j in range(i + 1, len(guests)):
+            if guests[i]["family_id"] == guests[j]["family_id"]:
+                for r in range(len(rooms)):
+                    model.Add(x[(i, r)] == x[(j, r)])
 
-    for _, guest in guests_df.iterrows():
+    # 🎯 цель: минимизировать пустые места
+    objective_terms = []
 
-        guest_gender = guest["gender"]
+    for r in range(len(rooms)):
+        used = sum(x[(g, r)] for g in range(len(guests)))
+        empty = rooms[r]["capacity"] - used
+        objective_terms.append(empty)
 
-        allocated = False
+    model.Minimize(sum(objective_terms))
 
-        for room_id, room_data in occupancy.items():
+    solver = cp_model.CpSolver()
+    status = solver.Solve(model)
 
-            current_guests = room_data["guests"]
+    result = []
 
-            capacity = room_data["capacity"]
+    if status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
 
-            room_gender = room_data["gender"]
+        for g in range(len(guests)):
+            for r in range(len(rooms)):
+                if solver.Value(x[(g, r)]) == 1:
+                    result.append({
+                        "fio": guests[g]["fio"],
+                        "room": rooms[r]["room_id"]
+                    })
 
-            if len(current_guests) >= capacity:
-                continue
-
-            if room_gender is not None:
-                if room_gender != guest_gender:
-                    continue
-
-            current_guests.append(
-                guest["fio"]
-            )
-
-            room_data["gender"] = guest_gender
-
-            allocations.append({
-                "fio": guest["fio"],
-                "gender": guest_gender,
-                "room": room_id
-            })
-
-            allocated = True
-
-            break
-
-        if not allocated:
-
-            allocations.append({
-                "fio": guest["fio"],
-                "gender": guest_gender,
-                "room": "NO ROOM"
-            })
-
-    return pd.DataFrame(allocations)
+    return result
