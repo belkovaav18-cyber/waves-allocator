@@ -1,7 +1,19 @@
 from ortools.sat.python import cp_model
 import pandas as pd
 from config import WEIGHTS
+def clean_rooms(rooms_df):
+    cleaned = []
 
+    for r in rooms_df:
+        cleaned.append({
+            "room_id": r.get("room_id"),
+            "capacity": int(r.get("вместимость", 0)),
+            "building": r.get("корпус"),
+            "number": r.get("номер комнаты"),
+            "floor": r.get("этаж")
+        })
+
+    return cleaned
 def norm_col(c):
     return str(c).strip().lower()
 # =========================================================
@@ -32,9 +44,8 @@ def solve(guests_df, rooms_df):
 
     # ❗ теперь уже ДАННЫЕ приходят как list[dict]
     guests = guests_df
-    rooms = []
-        for r in rooms_df:
-            rooms.append({k.strip().lower(): v for k, v in r.items()})
+    rooms = clean_rooms(rooms_df)
+    capacity = rooms[r]["capacity"]
 
     G = range(len(guests))
     R = range(len(rooms))
