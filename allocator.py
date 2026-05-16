@@ -82,11 +82,12 @@ def allocate_rooms(guests_df, rooms_df):
                 best_room = room["room_id"]
 
         if best_room is None:
-            allocations.append({
-                "fio": guest.get("fio", ""),
-                "room": "NO ROOM"
-            })
-            continue
+               allocations.append({
+               "fio": guest.get("fio", ""),
+               "room": "NO ROOM",
+               "reasons": ["не удалось подобрать комнату"]
+          })
+        continue
 
         state = room_state[best_room]
 
