@@ -1,4 +1,5 @@
 from ortools.sat.python import cp_model
+from ortools.sat.python.cp_model import OPTIMAL, FEASIBLE
 import pandas as pd
 from config import WEIGHTS
 
