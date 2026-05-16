@@ -1,11 +1,13 @@
 import pandas as pd
 import re
 
+
 # =========================================================
-# utils
+# COLUMN NORMALIZATION
 # =========================================================
 def normalize_columns(df):
     df = df.copy()
+
     df.columns = (
         df.columns
         .astype(str)
@@ -13,9 +15,13 @@ def normalize_columns(df):
         .str.replace("\ufeff", "", regex=False)
         .str.strip()
     )
+
     return df
 
 
+# =========================================================
+# HELPERS
+# =========================================================
 def norm(x):
     return re.sub(r"\s+", " ", str(x).strip().lower())
 
@@ -31,7 +37,22 @@ def detect_gender(fio):
 
 
 # =========================================================
-# NIGHTS
+# RESIDENT PARSER
+# =========================================================
+def parse_resident(v):
+    if pd.isna(v):
+        return True
+
+    v = str(v).lower()
+
+    if "не" in v and "прож" in v:
+        return False
+
+    return True
+
+
+# =========================================================
+# NIGHTS EXTRACTION
 # =========================================================
 def extract_nights(row):
     nights = []
@@ -59,57 +80,46 @@ def extract_nights(row):
 
 
 # =========================================================
-# RESIDENT
+# COMMENT PARSER (RULE-BASED)
 # =========================================================
-def parse_resident(v):
-    if pd.isna(v):
-        return True
+def parse_comment(comment, fio_list):
 
-    v = str(v).lower()
-    if "не" in v and "прож" in v:
-        return False
+    text = str(comment).lower()
 
-    return True
+    hard = []
+    soft = []
+    avoid = []
 
+    # --- simple FIO matching ---
+    for fio in fio_list:
+        fio_l = fio.lower()
+        if fio_l and fio_l in text:
+            hard.append(fio)
 
-# =========================================================
-# ROOM TYPE
-# =========================================================
-def parse_room_type(comment):
-    if not comment:
-        return None
+    # --- room type detection ---
+    room_type = None
 
-    c = str(comment).lower()
+    if "одномест" in text:
+        room_type = 1
+    elif "двухмест" in text or "двух-мест" in text:
+        room_type = 2
+    elif "трехмест" in text or "трёхмест" in text:
+        room_type = 3
 
-    if "одномест" in c:
-        return 1
-    if "двухмест" in c or "двух-мест" in c:
-        return 2
-    if "трехмест" in c or "трёхмест" in c:
-        return 3
+    # --- special logic ---
+    if "без подсел" in text or "одномест" in text:
+        room_type = 1
 
-    return None
-
-
-# =========================================================
-# COMMENT ENGINE SAFE
-# =========================================================
-
-fio_list = processed["fio"].tolist()
-
-if "Комментарий" in df.columns:
-    comment_series = df["Комментарий"].fillna("")
-else:
-    comment_series = pd.Series([""] * len(processed))
-
-
-parsed = comment_series.apply(
-    lambda c: parse_comment(c, fio_list)
-)
+    return {
+        "hard_group": list(set(hard)),
+        "soft_group": soft,
+        "avoid_group": avoid,
+        "room_type": room_type
+    }
 
 
 # =========================================================
-# MAIN
+# MAIN PIPELINE
 # =========================================================
 def preprocess_guests(df):
 
@@ -117,32 +127,51 @@ def preprocess_guests(df):
 
     processed = pd.DataFrame()
 
-    # basic
+    # -------------------------
+    # BASIC FIELDS
+    # -------------------------
     processed["fio"] = df["ФИО"]
 
-    # resident
-    processed["resident"] = df.get("Выбор тарифа за проживание", "").apply(parse_resident)
+    # -------------------------
+    # RESIDENT FLAG
+    # -------------------------
+    processed["resident"] = df.get(
+        "Выбор тарифа за проживание",
+        ""
+    ).apply(parse_resident)
 
-    # meta
+    # -------------------------
+    # META
+    # -------------------------
     processed["gender"] = processed["fio"].apply(detect_gender)
+
     processed["city"] = df.get("Город", "UNKNOWN")
     processed["status"] = df.get("Статус", "student")
 
-    # nights
+    # -------------------------
+    # NIGHTS
+    # -------------------------
     processed["nights"] = df.apply(extract_nights, axis=1)
 
-    # IMPORTANT: non-residents
+    # нерезиденты не живут
     processed["nights"] = processed.apply(
-        lambda row: [] if not row["resident"] else row["nights"],
+        lambda r: [] if not r["resident"] else r["nights"],
         axis=1
     )
 
-    # comments SAFE
-    comment_col = df["Комментарий"] if "Комментарий" in df.columns else [""] * len(df)
-
+    # -------------------------
+    # COMMENT ENGINE (SAFE)
+    # -------------------------
     fio_list = processed["fio"].tolist()
 
-    parsed = comment_col.apply(lambda c: parse_comment(c, fio_list))
+    if "Комментарий" in df.columns:
+        comment_series = df["Комментарий"].fillna("")
+    else:
+        comment_series = pd.Series([""] * len(processed))
+
+    parsed = comment_series.apply(
+        lambda c: parse_comment(c, fio_list)
+    )
 
     processed["group_hard"] = [p["hard_group"] for p in parsed]
     processed["group_soft"] = [p["soft_group"] for p in parsed]
