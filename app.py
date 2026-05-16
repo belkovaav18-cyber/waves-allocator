@@ -18,6 +18,8 @@ st.dataframe(rooms_df)
 
 raw = load_guests(SHEET_ID, TAB)
 guests_df = preprocess_guests(raw)
+non_residents = guests_df[guests_df["resident"] == False]
+guests_for_solver = guests_df[guests_df["resident"] == True]
 
 st.subheader("Гости")
 st.dataframe(guests_df)
