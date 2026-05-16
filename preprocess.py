@@ -3,12 +3,10 @@ import re
 
 
 # =========================================================
-# CLEAN COLUMNS
+# CLEAN
 # =========================================================
-def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
-
+def normalize_columns(df):
     df = df.copy()
-
     df.columns = (
         df.columns
         .astype(str)
@@ -16,19 +14,15 @@ def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
         .str.replace("\ufeff", "", regex=False)
         .str.strip()
     )
-
     return df
 
 
-# =========================================================
-# NORMALIZATION HELPERS
-# =========================================================
 def norm(x):
     return re.sub(r"\s+", " ", str(x).strip().lower())
 
 
 # =========================================================
-# FIND NIGHT SELECTIONS
+# NIGHTS (из чекбоксов)
 # =========================================================
 def extract_nights(row):
 
@@ -44,15 +38,12 @@ def extract_nights(row):
 
         val = str(val).strip().lower()
 
-        # нас интересуют только колонки проживания
         if "комната" not in col_str:
             continue
 
-        # если отмечено проживание
         if val in ["", "нет", "0", "-", "false"]:
             continue
 
-        # вытаскиваем номер ночи
         match = re.search(r"ночь на (\d+)", col_str)
 
         if match:
@@ -62,10 +53,9 @@ def extract_nights(row):
 
 
 # =========================================================
-# HARD GROUPS (REAL FIO MATCHING)
+# HARD GROUPS (через реальные ФИО)
 # =========================================================
 def build_fio_index(df):
-
     return {
         norm(fio): fio
         for fio in df["fio"].fillna("")
@@ -83,78 +73,71 @@ def extract_hard_groups(comment, fio_index):
 
     for fio_norm, fio_original in fio_index.items():
 
-        # пробуем матч по фамилии + имени (основной кейс)
+        # матч по фамилии + имени
         parts = fio_norm.split()
 
-        if len(parts) == 0:
+        if len(parts) < 2:
             continue
 
-        # минимум фамилия + имя
         key = " ".join(parts[:2])
 
-        if key and key in text:
+        if key in text:
             result.append(fio_original)
 
     return result
 
 
 # =========================================================
-# GENDER (простая эвристика)
+# GENDER
 # =========================================================
 def detect_gender(fio):
 
-    parts = str(fio).strip().split()
-
+    parts = str(fio).split()
     if not parts:
         return "M"
 
-    name = parts[0].lower()
-
-    return "F" if name.endswith(("а", "я")) else "M"
+    return "F" if parts[0].lower().endswith(("а", "я")) else "M"
 
 
 # =========================================================
-# MAIN PREPROCESS
+# MAIN
 # =========================================================
-def preprocess_guests(df: pd.DataFrame) -> pd.DataFrame:
+def preprocess_guests(df):
 
     df = normalize_columns(df)
 
     processed = pd.DataFrame()
 
-    # -----------------------------
-    # FIO
-    # -----------------------------
+    # -------------------------
+    # FIO (ВАЖНО: сразу норм)
+    # -------------------------
     processed["fio"] = df["ФИО"]
 
-    # -----------------------------
-    # gender
-    # -----------------------------
+    # -------------------------
+    # meta
+    # -------------------------
     processed["gender"] = processed["fio"].apply(detect_gender)
 
-    # -----------------------------
-    # optional fields
-    # -----------------------------
     processed["city"] = df.get("Город", "UNKNOWN")
     processed["status"] = df.get("Статус", "student")
 
-    # -----------------------------
-    # comments
-    # -----------------------------
     processed["comment"] = df.get("Комментарий", "")
 
-    # -----------------------------
-    # nights (ВАЖНОЕ ИЗМЕНЕНИЕ)
-    # -----------------------------
+    # -------------------------
+    # nights
+    # -------------------------
     processed["nights"] = df.apply(extract_nights, axis=1)
 
-    # -----------------------------
-    # HARD GROUPS (FIXED)
-    # -----------------------------
+    # -------------------------
+    # HARD GROUPS
+    # -------------------------
     fio_index = build_fio_index(processed)
 
     processed["group_hard"] = processed["comment"].apply(
         lambda c: extract_hard_groups(c, fio_index)
     )
+
+    # soft groups пока выключаем (можно расширить позже)
+    processed["group_soft"] = [[] for _ in range(len(processed))]
 
     return processed
