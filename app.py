@@ -25,7 +25,10 @@ st.dataframe(guests)
 
 if st.button("🚀 Расселить"):
 
-    result = solve(guests, rooms)
+    from solver_controller import smart_solve
+
+
+    result, debug = smart_solve(guests, rooms)
 
     st.subheader("Result")
     st.dataframe(result)
