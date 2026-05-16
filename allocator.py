@@ -7,39 +7,70 @@ def optimize_allocation(guests, rooms):
 
     x = {}
 
-    # переменные
-    for g in range(len(guests)):
-        for r in range(len(rooms)):
+    G = len(guests)
+    R = len(rooms)
+
+    # =====================
+    # VARIABLES
+    # =====================
+    for g in range(G):
+        for r in range(R):
             x[(g, r)] = model.NewBoolVar(f"x_{g}_{r}")
 
-    # 1. каждый гость в одной комнате
-    for g in range(len(guests)):
-        model.Add(sum(x[(g, r)] for r in range(len(rooms))) == 1)
+    # =====================
+    # 1. каждый гость в 1 комнате
+    # =====================
+    for g in range(G):
+        model.Add(sum(x[(g, r)] for r in range(R)) == 1)
 
+    # =====================
     # 2. вместимость
-    for r in range(len(rooms)):
+    # =====================
+    for r in range(R):
         model.Add(
-            sum(x[(g, r)] for g in range(len(guests)))
-            <= rooms[r]["capacity"]
+            sum(x[(g, r)] for g in range(G)) <= int(rooms[r]["capacity"])
         )
 
-    # 3. семьи вместе (упрощённо по фамилии)
-    for i in range(len(guests)):
-        for j in range(i + 1, len(guests)):
-            if guests[i]["family_id"] == guests[j]["family_id"]:
-                for r in range(len(rooms)):
+    # =====================
+    # 3. семьи вместе (safe version)
+    # =====================
+    for i in range(G):
+        for j in range(i + 1, G):
+
+            fam_i = guests[i].get("family_id")
+            fam_j = guests[j].get("family_id")
+
+            if fam_i is not None and fam_i == fam_j:
+
+                for r in range(R):
                     model.Add(x[(i, r)] == x[(j, r)])
 
-    # 🎯 цель: минимизировать пустые места
-    objective_terms = []
+    # =====================
+    # 4. objective: minimize unused space (soft)
+    # =====================
+    unused = []
 
-    for r in range(len(rooms)):
-        used = sum(x[(g, r)] for g in range(len(guests)))
-        empty = rooms[r]["capacity"] - used
-        objective_terms.append(empty)
+    for r in range(R):
 
-    model.Minimize(sum(objective_terms))
+        used = model.NewIntVar(0, G, f"used_{r}")
 
+        model.Add(
+            used == sum(x[(g, r)] for g in range(G))
+        )
+
+        capacity = int(rooms[r]["capacity"])
+
+        slack = model.NewIntVar(0, capacity, f"slack_{r}")
+
+        model.Add(slack == capacity - used)
+
+        unused.append(slack)
+
+    model.Minimize(sum(unused))
+
+    # =====================
+    # SOLVE
+    # =====================
     solver = cp_model.CpSolver()
     status = solver.Solve(model)
 
@@ -47,9 +78,11 @@ def optimize_allocation(guests, rooms):
 
     if status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
 
-        for g in range(len(guests)):
-            for r in range(len(rooms)):
+        for g in range(G):
+            for r in range(R):
+
                 if solver.Value(x[(g, r)]) == 1:
+
                     result.append({
                         "fio": guests[g]["fio"],
                         "room": rooms[r]["room_id"]
