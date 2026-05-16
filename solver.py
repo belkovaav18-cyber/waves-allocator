@@ -82,7 +82,59 @@ def solve(guests, rooms):
                     model.Add(
                         x[g, r] == x[h, r]
                     )
+    # =====================================================
+    # COUPLE / DOUBLE BED LOGIC
+    # =====================================================
+    for g in G:
+    
+        hard_group = guests[g].get("group_hard", [])
+        req = guests[g].get("room_type")
+    
+        # только пары
+        if len(hard_group) != 1:
+            continue
+    
+        # только двухместное пожелание
+        if req != 2:
+            continue
+    
+        partner_fio = hard_group[0]
+    
+        for h in G:
+    
+            if guests[h]["fio"] != partner_fio:
+                continue
+    
+            # ищем комнаты
+            for r in R:
+    
+                cap = int(rooms[r]["вместимость"])
+    
+                # только двухместные комнаты
+                if cap != 2:
+                    continue
+    
+                # если оба в комнате ->
+                # больше никого нельзя
+                both = model.NewBoolVar(
+                    f"couple_{g}_{h}_{r}"
+                )
+    
+                model.Add(both <= x[g, r])
+                model.Add(both <= x[h, r])
+    
+                model.Add(
+                    both >= x[g, r] + x[h, r] - 1
+                )
+    
+                # ровно 2 человека в комнате
+                model.Add(
+                    sum(x[k, r] for k in G)
+                    <= 2
+                ).OnlyEnforceIf(both)
 
+    
+    
     # =====================================================
     # CONFLICTS
     # =====================================================
