@@ -164,11 +164,14 @@ def preprocess_guests(df):
     ] = df.apply(lambda r: [], axis=1)
 
     # -------------------------
-    # COMMENT ENGINE
+    # COMMENT ENGINE (FIXED)
     # -------------------------
     fio_list = processed["fio"].tolist()
 
-    comment_col = df["Комментарий"].fillna("") if "Комментарий" in df.columns else [""] * len(df)
+    if "Комментарий" in df.columns:
+        comment_col = df["Комментарий"].fillna("").astype(str)
+    else:
+        comment_col = pd.Series([""] * len(processed))
 
     parsed = comment_col.apply(lambda c: parse_comment(c, fio_list))
 
