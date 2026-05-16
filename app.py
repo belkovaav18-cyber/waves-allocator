@@ -46,5 +46,5 @@ st.dataframe(result)
 st.subheader("Debug")
 st.json(debug)
 
-    save_results(SHEET_ID, "Result", result)
-    st.success("Готово")
+save_results(SHEET_ID, "Result", result)
+st.success("Готово")
