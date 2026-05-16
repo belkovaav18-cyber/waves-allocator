@@ -51,7 +51,7 @@ if st.button("Авторасселение"):
       rooms.to_dict("records")
   )
 
-room_stats = build_room_stats(allocations, rooms)
+    room_stats = build_room_stats(allocations, rooms)
 
     st.session_state.allocations = allocations
     st.session_state.rejections = rejections
