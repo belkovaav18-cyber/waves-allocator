@@ -1,113 +1,25 @@
-import pandas as pd
-from collections import defaultdict
 def allocate_rooms(guests_df, rooms_df):
 
-    # 🔥 FIX: гарантируем правильный формат
     guests_df = list(guests_df)
     rooms_df = list(rooms_df)
-    
-    # =========================
-    # NORMALIZE INPUT
-    # =========================
-    if isinstance(guests_df, pd.DataFrame):
-        guests_df = guests_df.to_dict("records")
-
-    if isinstance(rooms_df, pd.DataFrame):
-        rooms_df = rooms_df.to_dict("records")
 
     allocations = []
 
-    # =========================
-    # SAFE SORT
-    # =========================
+    rooms = [
+        {
+            "room_id": r["room_id"],
+            "capacity": int(r["вместимость"])
+        }
+        for r in rooms_df
+    ]
+
     guests_df = sorted(
         guests_df,
         key=lambda g: (
-            g.get("status") != "professor",
+            g.get("status", "student") != "professor",
             -(g.get("age") or 0)
         )
     )
-
-def age_distance(a, b):
-    if a is None or b is None:
-        return 10
-    return abs(a - b)
-
-
-def score_room(guest, room, room_state):
-
-    score = 0
-
-    # --------------------
-    # HARD CONSTRAINTS
-    # --------------------
-
-    # capacity
-    if len(room_state["guests"]) >= room["capacity"]:
-        return -10**9
-
-    # professor/student conflict
-    if room_state["has_professor"] and guest["status"] == "student":
-        return -10**6
-
-    if guest["status"] == "professor" and len(room_state["guests"]) > 0:
-        return -10**6
-
-    # family must stay together
-    family = guest.get("family_id")
-    if family:
-        families_in_room = room_state["families"]
-        if families_in_room and family not in families_in_room:
-            return -10**6
-
-    # --------------------
-    # SOFT CONSTRAINTS
-    # --------------------
-
-    # student preference
-    if guest["status"] == "student":
-        if room_state["has_professor"]:
-            score -= 1000
-
-    # age compatibility
-    for g in room_state["guests"]:
-        score -= age_distance(guest.get("age"), g.get("age"))
-
-    # city penalty
-    city = guest.get("city")
-    if city:
-        if room_state["cities"] and city not in room_state["cities"]:
-            score -= 50
-        else:
-            score += 10
-
-    # same gender soft bonus
-    if room_state["gender"] and room_state["gender"] != guest["gender"]:
-        score -= 20
-
-    return score
-
-
-def allocate_rooms(guests_df, rooms_df):
-
-    allocations = []
-
-    rooms = []
-
-    for _, r in rooms_df.iterrows():
-        rooms.append({
-            "room_id": r["room_id"],
-            "capacity": int(r["вместимость"])
-        })
-
-    # sort: seniors / professors first, then older
-    guests_df = sorted(
-    list(guests_df),
-    key=lambda g: (
-        g.get("status") != "professor",
-        -(g.get("age") or 0)
-    )
-)
 
     room_state = {
         r["room_id"]: {
@@ -129,16 +41,28 @@ def allocate_rooms(guests_df, rooms_df):
 
             state = room_state[room["room_id"]]
 
-            s = score_room(guest, room, state)
+            if len(state["guests"]) >= room["capacity"]:
+                continue
 
-            if s > best_score:
-                best_score = s
+            score = 0
+
+            # мягкая логика
+            if state["has_professor"] and guest.get("status") == "student":
+                score -= 1000
+
+            if state["cities"] and guest.get("city") not in state["cities"]:
+                score -= 50
+
+            if state["gender"] and state["gender"] != guest.get("gender"):
+                score -= 20
+
+            if score > best_score:
+                best_score = score
                 best_room = room["room_id"]
 
-        # assign
-        if best_room is None or best_score < -10**8:
+        if best_room is None:
             allocations.append({
-                "fio": guest["fio"],
+                "fio": guest.get("fio", ""),
                 "room": "NO ROOM"
             })
             continue
@@ -147,17 +71,13 @@ def allocate_rooms(guests_df, rooms_df):
 
         state["guests"].append(guest)
         state["cities"].add(guest.get("city"))
-        if not state["gender"]:
-            state["gender"] = guest["gender"]
-
-        if guest.get("family_id"):
-            state["families"].add(guest["family_id"])
+        state["gender"] = guest.get("gender")
 
         if guest.get("status") == "professor":
             state["has_professor"] = True
 
         allocations.append({
-            "fio": guest["fio"],
+            "fio": guest.get("fio", ""),
             "room": best_room
         })
 
