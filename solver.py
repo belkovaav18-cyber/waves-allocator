@@ -1,6 +1,34 @@
 from ortools.sat.python import cp_model
 import pandas as pd
 from config import WEIGHTS
+import pandas as pd
+
+
+def normalize_records(data):
+
+    if data is None:
+        return []
+
+    # DataFrame → list[dict]
+    if isinstance(data, pd.DataFrame):
+        return data.to_dict("records")
+
+    # already correct
+    if isinstance(data, list):
+        return data
+
+    # single dict
+    if isinstance(data, dict):
+        return [data]
+
+    # pandas Series
+    if hasattr(data, "to_dict"):
+        try:
+            return data.to_dict("records")
+        except:
+            return [data.to_dict()]
+
+    raise TypeError(f"Unsupported data type: {type(data)}")
 def clean_rooms(rooms_df):
     cleaned = []
 
