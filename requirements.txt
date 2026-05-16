@@ -3,4 +3,4 @@ pandas
 openpyxl
 gspread
 google-auth
-ortools==9.8.3296
+
