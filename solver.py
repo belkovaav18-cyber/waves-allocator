@@ -1,25 +1,49 @@
 from ortools.sat.python import cp_model
 from ortools.sat.python.cp_model import OPTIMAL, FEASIBLE
+
 import pandas as pd
+
 from config import WEIGHTS
 
 
+# =========================================================
+# CONFLICT COST
+# =========================================================
 def conflict_cost(g1, g2):
 
     cost = 0
 
+    # -------------------------------------------------
+    # gender conflict
+    # -------------------------------------------------
     if g1["gender"] != g2["gender"]:
         cost += WEIGHTS["gender_conflict"]
 
+    # -------------------------------------------------
+    # city conflict
+    # -------------------------------------------------
     if g1.get("city") != g2.get("city"):
         cost += WEIGHTS["city_diff"]
 
+    # -------------------------------------------------
+    # status conflict
+    # -------------------------------------------------
     if g1.get("status") != g2.get("status"):
         cost += WEIGHTS["status_diff"]
 
     return cost
 
 
+# =========================================================
+# NIGHT OVERLAP
+# =========================================================
+def overlap(n1, n2):
+    return bool(set(n1) & set(n2))
+
+
+# =========================================================
+# MAIN SOLVER
+# =========================================================
 def solve(guests_df, rooms_df):
 
     model = cp_model.CpModel()
@@ -27,74 +51,227 @@ def solve(guests_df, rooms_df):
     guests = guests_df.to_dict("records")
     rooms = rooms_df.to_dict("records")
 
+    G = range(len(guests))
+    R = range(len(rooms))
+
+    # =====================================================
+    # VARIABLES
+    # x[g,r] = guest g assigned to room r
+    # =====================================================
     x = {}
 
-    # x[g,r] = 1 если гость g в комнате r
-    for g in range(len(guests)):
-        for r in range(len(rooms)):
+    for g in G:
+        for r in R:
             x[g, r] = model.NewBoolVar(f"x_{g}_{r}")
 
-    # 1. каждый гость в одной комнате
-    for g in range(len(guests)):
-        model.Add(sum(x[g, r] for r in range(len(rooms))) == 1)
-
-    # 2. вместимость
-    for r in range(len(rooms)):
+    # =====================================================
+    # EVERY GUEST EXACTLY ONE ROOM
+    # =====================================================
+    for g in G:
         model.Add(
-            sum(x[g, r] for g in range(len(guests))) <= int(rooms[r]["вместимость"])
+            sum(x[g, r] for r in R) == 1
         )
 
-    # 3. objective (минимизация конфликтов)
+    # =====================================================
+    # ALL NIGHTS
+    # =====================================================
+    all_nights = set()
+
+    for guest in guests:
+        all_nights.update(guest["nights"])
+
+    # =====================================================
+    # ROOM CAPACITY BY NIGHT
+    # =====================================================
+    for r in R:
+
+        room = rooms[r]
+
+        room_status = str(
+            room.get("статус", "")
+        ).lower()
+
+        # ---------------------------------------------
+        # skip blocked rooms
+        # ---------------------------------------------
+        if room_status in ["blocked", "closed"]:
+            continue
+
+        capacity = int(room["вместимость"])
+
+        for night in all_nights:
+
+            guests_this_night = []
+
+            for g in G:
+
+                if night in guests[g]["nights"]:
+                    guests_this_night.append(x[g, r])
+
+            model.Add(
+                sum(guests_this_night) <= capacity
+            )
+
+    # =====================================================
+    # HARD GROUP CONSTRAINTS
+    # =====================================================
+    fio_to_idx = {
+        guests[g]["fio"]: g
+        for g in G
+    }
+
+    for g in G:
+
+        group = guests[g].get("group", [])
+
+        if not group:
+            continue
+
+        for member in group:
+
+            member = member.lower()
+
+            for other_fio, other_idx in fio_to_idx.items():
+
+                if member in other_fio.lower():
+
+                    # must be same room
+                    for r in R:
+                        model.Add(
+                            x[g, r] == x[other_idx, r]
+                        )
+
+    # =====================================================
+    # OBJECTIVE
+    # =====================================================
     objective_terms = []
 
-    for g1 in range(len(guests)):
+    for g1 in G:
+
         for g2 in range(g1 + 1, len(guests)):
 
-            base_cost = conflict_cost(guests[g1], guests[g2])
+            # ---------------------------------------------
+            # no overlap -> no conflict possible
+            # ---------------------------------------------
+            if not overlap(
+                guests[g1]["nights"],
+                guests[g2]["nights"]
+            ):
+                continue
+
+            base_cost = conflict_cost(
+                guests[g1],
+                guests[g2]
+            )
 
             if base_cost == 0:
                 continue
 
-            for r in range(len(rooms)):
+            for r in R:
 
-                # если оба в одной комнате
-                var = model.NewBoolVar(f"pair_{g1}_{g2}_{r}")
+                pair = model.NewBoolVar(
+                    f"pair_{g1}_{g2}_{r}"
+                )
 
-                model.AddBoolAnd([x[g1, r], x[g2, r]]).OnlyEnforceIf(var)
-                model.AddBoolOr([x[g1, r].Not(), x[g2, r].Not()]).OnlyEnforceIf(var.Not())
+                # pair == 1 iff both in same room
+                model.Add(
+                    pair <= x[g1, r]
+                )
 
-                objective_terms.append(base_cost * var)
+                model.Add(
+                    pair <= x[g2, r]
+                )
 
-    model.Minimize(sum(objective_terms))
+                model.Add(
+                    pair >= x[g1, r] + x[g2, r] - 1
+                )
 
-solver = cp_model.CpSolver()
+                objective_terms.append(
+                    base_cost * pair
+                )
 
-solver.parameters.max_time_in_seconds = 10
+    # =====================================================
+    # MINIMIZE CONFLICTS
+    # =====================================================
+    model.Minimize(
+        sum(objective_terms)
+    )
 
-status = solver.Solve(model)
+    # =====================================================
+    # SOLVER
+    # =====================================================
+    solver = cp_model.CpSolver()
 
-from ortools.sat.python.cp_model import OPTIMAL, FEASIBLE
+    solver.parameters.max_time_in_seconds = 20
 
-if status not in [OPTIMAL, FEASIBLE]:
+    status = solver.Solve(model)
 
-    return pd.DataFrame([
-        {
-            "error": f"No solution found. Status={status}"
-        }
-    ])
+    # =====================================================
+    # NO SOLUTION
+    # =====================================================
+    if status not in [OPTIMAL, FEASIBLE]:
 
-result = []
+        return pd.DataFrame([
+            {
+                "error": f"No solution found. Status={status}"
+            }
+        ])
 
-for g in range(len(guests)):
-    for r in range(len(rooms)):
+    # =====================================================
+    # RESULT
+    # =====================================================
+    result = []
 
-        if solver.Value(x[g, r]):
+    for g in G:
 
-            result.append({
-                "fio": guests[g]["fio"],
-                "room": rooms[r]["room_id"]
-            })
+        for r in R:
 
-return pd.DataFrame(result)
+            if solver.Value(x[g, r]):
+
+                room = rooms[r]
+
+                result.append({
+
+                    "fio": guests[g]["fio"],
+
+                    "room_id": room["room_id"],
+
+                    "building": room["корпус"],
+
+                    "room_number": room["номер комнаты"],
+
+                    "floor": room["этаж"],
+
+                    "capacity": room["вместимость"],
+
+                    "nights": ", ".join(
+                        map(str, guests[g]["nights"])
+                    ),
+
+                    "gender": guests[g]["gender"],
+
+                    "status": guests[g]["status"],
+
+                    "group": ", ".join(
+                        guests[g].get("group", [])
+                    )
+                })
+
+    result_df = pd.DataFrame(result)
+
+    # =====================================================
+    # SORT
+    # =====================================================
+    if not result_df.empty:
+
+        result_df = result_df.sort_values(
+            by=[
+                "building",
+                "floor",
+                "room_number"
+            ]
+        )
+
+    return result_df
 
    
