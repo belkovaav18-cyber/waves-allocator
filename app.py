@@ -46,10 +46,12 @@ if "rejections" not in st.session_state:
 # =========================
 if st.button("Авторасселение"):
 
-    allocations, rejections = allocate_rooms(
+    allocations, reasons = allocate_rooms(
       guests.to_dict("records"),
       rooms.to_dict("records")
   )
+
+stats = build_room_stats(room_state)
 
     room_stats = build_room_stats(allocations, rooms)
 
@@ -102,3 +104,11 @@ if st.session_state.allocations is not None:
     st.dataframe(room_stats)
 
     st.bar_chart(room_stats.set_index("room_id")["occupied"])
+    st.subheader("Результат")
+    st.dataframe(allocations)
+
+    st.subheader("Кто не заселился и почему")
+    st.dataframe(reasons)
+
+    st.subheader("Заполненность комнат")
+    st.dataframe(stats)
