@@ -6,8 +6,8 @@ from preprocess import preprocess_guests
 from solver import solve
 
 
-SHEET_ID = "YOUR_SHEET_ID"
-TAB = "Form Responses 1"
+SHEET_ID = "1lF4SV24wTo5OwsidQ7UPqBVaGzdw_fBSx0OuBJJ4cWg"
+TAB = "Sheet"
 
 st.title("🏨 Расселение")
 
