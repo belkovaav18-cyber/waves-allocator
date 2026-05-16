@@ -35,11 +35,29 @@ def save_results(sheet_id, tab_name, df):
 
     client = connect()
 
-    sheet = client.open_by_key(sheet_id).worksheet(tab_name)
+    sh = client.open_by_key(sheet_id)
+
+    tabs = [ws.title for ws in sh.worksheets()]
+
+    if tab_name not in tabs:
+
+        sh.add_worksheet(
+            title=tab_name,
+            rows=2000,
+            cols=100
+        )
+
+    sheet = sh.worksheet(tab_name)
 
     sheet.clear()
 
-    sheet.update(
-        [df.columns.values.tolist()] +
-        df.values.tolist()
-    )
+    # -----------------------------------------
+    # convert everything to strings
+    # -----------------------------------------
+    df = df.fillna("").astype(str)
+
+    data = [
+        df.columns.tolist()
+    ] + df.values.tolist()
+
+    sheet.update(data)
