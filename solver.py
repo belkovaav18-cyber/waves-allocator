@@ -3,6 +3,9 @@ import pandas as pd
 from config import WEIGHTS
 
 
+# =========================================================
+# COST FUNCTION
+# =========================================================
 def conflict_cost(a, b):
     cost = 0
 
@@ -18,16 +21,29 @@ def conflict_cost(a, b):
     return cost
 
 
+# =========================================================
+# SAFE GET ROOM CAP
+# =========================================================
+def get_capacity(room):
+    try:
+        return int(room.get("вместимость", 0))
+    except:
+        return 0
+
+
+# =========================================================
+# SOLVER
+# =========================================================
 def solve(guests, rooms):
 
     # =====================================================
-    # 1. SPLIT RESIDENTS / NON-RESIDENTS
+    # SPLIT
     # =====================================================
-    residents = [g for g in guests if g.get("will_stay", True)]
-    non_residents = [g for g in guests if not g.get("will_stay", True)]
+    residents = [g for g in guests if g.get("resident", True)]
+    non_residents = [g for g in guests if not g.get("resident", True)]
 
     # =====================================================
-    # EDGE CASE: нет проживающих
+    # EDGE CASE
     # =====================================================
     if len(residents) == 0:
         return pd.DataFrame([{
@@ -41,6 +57,9 @@ def solve(guests, rooms):
     G = range(len(residents))
     R = range(len(rooms))
 
+    # =====================================================
+    # VARIABLES
+    # =====================================================
     x = {}
 
     for g in G:
@@ -48,20 +67,44 @@ def solve(guests, rooms):
             x[g, r] = model.NewBoolVar(f"x_{g}_{r}")
 
     # =====================================================
-    # one room per resident
+    # each guest -> one room
     # =====================================================
     for g in G:
         model.Add(sum(x[g, r] for r in R) == 1)
 
     # =====================================================
-    # capacity
+    # capacity constraint
     # =====================================================
     for r in R:
-        cap = int(rooms[r]["вместимость"])
-        model.Add(sum(x[g, r] for g in G) <= cap)
+        cap = get_capacity(rooms[r])
+
+        model.Add(
+            sum(x[g, r] for g in G) <= cap
+        )
 
     # =====================================================
-    # objective (conflicts)
+    # ROOM TYPE CONSTRAINT (NEW)
+    # =====================================================
+    for g in G:
+
+        req = residents[g].get("room_type")
+
+        if req is None or (isinstance(req, float) and pd.isna(req)):
+            continue
+
+        try:
+            req = int(req)
+        except:
+            continue
+
+        for r in R:
+            cap = get_capacity(rooms[r])
+
+            if cap != req:
+                model.Add(x[g, r] == 0)
+
+    # =====================================================
+    # OBJECTIVE (conflicts)
     # =====================================================
     objective = []
 
@@ -69,10 +112,12 @@ def solve(guests, rooms):
         for g2 in range(g1 + 1, len(residents)):
 
             cost = conflict_cost(residents[g1], residents[g2])
+
             if cost == 0:
                 continue
 
             for r in R:
+
                 p = model.NewBoolVar(f"p_{g1}_{g2}_{r}")
 
                 model.Add(p <= x[g1, r])
@@ -83,6 +128,9 @@ def solve(guests, rooms):
 
     model.Minimize(sum(objective))
 
+    # =====================================================
+    # SOLVE
+    # =====================================================
     solver = cp_model.CpSolver()
     solver.parameters.max_time_in_seconds = 10
 
@@ -92,7 +140,7 @@ def solve(guests, rooms):
         return pd.DataFrame([{"error": "no solution"}])
 
     # =====================================================
-    # RESULT for residents
+    # RESULT (residents)
     # =====================================================
     result = []
 
