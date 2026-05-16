@@ -29,8 +29,9 @@ def solve(guests_df, rooms_df):
 
     model = cp_model.CpModel()
 
-    guests = guests_df.to_dict("records")
-    rooms = rooms_df.to_dict("records")
+    # ❗ теперь уже ДАННЫЕ приходят как list[dict]
+    guests = guests_df
+    rooms = rooms_df
 
     G = range(len(guests))
     R = range(len(rooms))
