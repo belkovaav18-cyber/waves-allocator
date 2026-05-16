@@ -1,5 +1,7 @@
 streamlit
 pandas
 openpyxl
-gspread
 google-auth
+gspread
+ortools
+numpy
