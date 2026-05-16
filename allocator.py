@@ -6,14 +6,21 @@ from collections import defaultdict
 # penalties
 # =========================================================
 def gender_penalty(a, b):
-    return 10 if a and b and a != b else 0
+    if not a or not b:
+        return 0
+    return 10 if a != b else 0
 
 
 def group_bonus(guest_groups, room):
+    """
+    soft bonus: если кто-то из группы уже в комнате → поощрение
+    """
     if not guest_groups:
         return 0
 
-    if any(x in room["occupants"] for x in guest_groups):
+    occupants = room.get("occupants", set())
+
+    if any(x in occupants for x in guest_groups):
         return -20
 
     return 0
@@ -23,18 +30,26 @@ def group_bonus(guest_groups, room):
 # check availability
 # =========================================================
 def is_free(room, nights):
-    return all(
-        len(room["calendar"][n]) < room["capacity"]
-        for n in nights
-    )
+    """
+    проверка вместимости по ночам
+    """
+    if not nights:
+        return False
+
+    calendar = room["calendar"]
+    capacity = room["capacity"]
+
+    return all(len(calendar[n]) < capacity for n in nights)
 
 
 def add(room, guest, nights):
-
+    """
+    добавление гостя в комнату
+    """
     for n in nights:
         room["calendar"][n].append(guest)
 
-    room["occupants"].add(guest["fio"])
+    room["occupants"].add(guest.get("fio"))
 
 
 # =========================================================
@@ -42,11 +57,27 @@ def add(room, guest, nights):
 # =========================================================
 def allocate_rooms(guests_df, rooms_df):
 
+    # ----------------------------
+    # normalize inputs (важно!)
+    # ----------------------------
+    if isinstance(guests_df, pd.DataFrame):
+        guests = guests_df.to_dict("records")
+    else:
+        guests = list(guests_df)
+
+    if isinstance(rooms_df, pd.DataFrame):
+        rooms_raw = rooms_df.to_dict("records")
+    else:
+        rooms_raw = list(rooms_df)
+
+    # ----------------------------
+    # init rooms
+    # ----------------------------
     rooms = {}
 
-    for r in rooms_df.to_dict("records"):
-        rooms[r["room_id"]] = {
-            "capacity": int(r["вместимость"]),
+    for r in rooms_raw:
+        rooms[r.get("room_id")] = {
+            "capacity": int(r.get("вместимость", 0)),
             "calendar": defaultdict(list),
             "occupants": set(),
             "gender": None
@@ -55,21 +86,33 @@ def allocate_rooms(guests_df, rooms_df):
     allocations = []
     rejections = []
 
-    # сначала важные
-    guests_df = sorted(
-        guests_df,
-        key=lambda g: (
+    # ----------------------------
+    # sort guests (priority first)
+    # ----------------------------
+    def guest_priority(g):
+        return (
             len(g.get("group_hard", [])) == 0,
             g.get("status") != "professor"
         )
-    )
 
-    for g in guests_df:
+    guests = sorted(guests, key=guest_priority)
 
-        nights = g["nights"]
+    # ----------------------------
+    # main loop
+    # ----------------------------
+    for g in guests:
+
+        nights = g.get("nights", [])
+
+        if not nights:
+            rejections.append({
+                "fio": g.get("fio"),
+                "reason": "нет выбранных ночей"
+            })
+            continue
 
         best_room = None
-        best_score = 10**9
+        best_score = float("inf")
 
         for room_id, room in rooms.items():
 
@@ -77,8 +120,8 @@ def allocate_rooms(guests_df, rooms_df):
                 continue
 
             score = 0
-            score += gender_penalty(room["gender"], g["gender"])
-            score += group_bonus(g.get("group_hard"), room)
+            score += gender_penalty(room.get("gender"), g.get("gender"))
+            score += group_bonus(g.get("group_hard", []), room)
 
             if score < best_score:
                 best_score = score
@@ -86,22 +129,29 @@ def allocate_rooms(guests_df, rooms_df):
 
         if best_room is None:
             rejections.append({
-                "fio": g["fio"],
-                "reason": "нет комнаты"
+                "fio": g.get("fio"),
+                "reason": "нет подходящей комнаты"
             })
             continue
 
         add(rooms[best_room], g, nights)
 
         allocations.append({
-            "fio": g["fio"],
+            "fio": g.get("fio"),
             "room": best_room,
-            "nights": g["nights"]
+            "nights": nights
         })
 
-    return pd.DataFrame(allocations), pd.DataFrame(rejections), rooms
+    return (
+        pd.DataFrame(allocations),
+        pd.DataFrame(rejections),
+        rooms
+    )
 
 
+# =========================================================
+# stats
+# =========================================================
 def build_room_stats(room_state):
 
     return pd.DataFrame([
