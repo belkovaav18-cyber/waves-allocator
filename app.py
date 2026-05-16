@@ -5,16 +5,17 @@ from sheets import load_guests, save_results
 from preprocess import preprocess
 from solver import solve
 
-
-SHEET_ID = "YOUR_SHEET_ID"
 TAB = "Form Responses 1"
+
+raw = load_guests(TAB)
+
 
 
 st.title("🏨 OR-Tools расселение")
 
 rooms = pd.read_excel("data/rooms.xlsx")
 
-raw = load_guests(SHEET_ID, TAB)
+
 guests = preprocess(raw)
 
 st.subheader("Гости")
