@@ -156,7 +156,8 @@ def preprocess_guests(df):
     processed["nights"] = df.apply(extract_nights, axis=1)
 
     # IMPORTANT: non-residents
-    processed.loc[~processed["resident"], "nights"] = [[] for _ in range(len(processed))]
+    mask = ~processed["resident"]
+    processed.loc[mask, "nights"] = [[] for _ in range(mask.sum())]
 
     # comments SAFE
     comment_col = df["Комментарий"] if "Комментарий" in df.columns else [""] * len(df)
