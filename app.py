@@ -40,10 +40,10 @@ if "allocations" not in st.session_state:
 # =========================
 if st.button("Авторасселение"):
 
-   allocations = allocate_rooms(
-    guests,
-    rooms
-)
+    allocations = allocate_rooms(
+     guests,
+     rooms
+ )
 
     st.session_state.allocations = allocations
 
