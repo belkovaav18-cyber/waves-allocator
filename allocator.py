@@ -1,145 +1,137 @@
-from ortools.sat.python import cp_model
+import pandas as pd
+from collections import defaultdict
 
 
-def allocate_rooms(guests, rooms):
+def age_distance(a, b):
+    if a is None or b is None:
+        return 10
+    return abs(a - b)
 
-    model = cp_model.CpModel()
 
-    G = len(guests)
-    R = len(rooms)
+def score_room(guest, room, room_state):
 
-    x = {}
+    score = 0
 
-    # =========================
-    # VARIABLES
-    # =========================
-    for g in range(G):
-        for r in range(R):
-            x[(g, r)] = model.NewBoolVar(f"x_{g}_{r}")
-
-    # =========================
+    # --------------------
     # HARD CONSTRAINTS
-    # =========================
+    # --------------------
 
-    # 1. каждый гость в 1 комнате
-    for g in range(G):
-        model.Add(sum(x[(g, r)] for r in range(R)) == 1)
+    # capacity
+    if len(room_state["guests"]) >= room["capacity"]:
+        return -10**9
 
-    # 2. вместимость
-    for r in range(R):
-        model.Add(
-            sum(x[(g, r)] for g in range(G))
-            <= int(rooms[r]["вместимость"])
+    # professor/student conflict
+    if room_state["has_professor"] and guest["status"] == "student":
+        return -10**6
+
+    if guest["status"] == "professor" and len(room_state["guests"]) > 0:
+        return -10**6
+
+    # family must stay together
+    family = guest.get("family_id")
+    if family:
+        families_in_room = room_state["families"]
+        if families_in_room and family not in families_in_room:
+            return -10**6
+
+    # --------------------
+    # SOFT CONSTRAINTS
+    # --------------------
+
+    # student preference
+    if guest["status"] == "student":
+        if room_state["has_professor"]:
+            score -= 1000
+
+    # age compatibility
+    for g in room_state["guests"]:
+        score -= age_distance(guest.get("age"), g.get("age"))
+
+    # city penalty
+    city = guest.get("city")
+    if city:
+        if room_state["cities"] and city not in room_state["cities"]:
+            score -= 50
+        else:
+            score += 10
+
+    # same gender soft bonus
+    if room_state["gender"] and room_state["gender"] != guest["gender"]:
+        score -= 20
+
+    return score
+
+
+def allocate_rooms(guests_df, rooms_df):
+
+    allocations = []
+
+    rooms = []
+
+    for _, r in rooms_df.iterrows():
+        rooms.append({
+            "room_id": r["room_id"],
+            "capacity": int(r["вместимость"])
+        })
+
+    # sort: seniors / professors first, then older
+    guests_df = sorted(
+        guests_df,
+        key=lambda g: (
+            g.get("status") != "professor",
+            -(g.get("age") or 0)
         )
+    )
 
-    # =========================
-    # FAMILY HARD CONSTRAINT
-    # =========================
-    families = {}
+    room_state = {
+        r["room_id"]: {
+            "guests": [],
+            "cities": set(),
+            "families": set(),
+            "has_professor": False,
+            "gender": None
+        }
+        for r in rooms
+    }
 
-    for i, g in enumerate(guests):
-        fam = g.get("family_id")
-        if fam:
-            families.setdefault(fam, []).append(i)
+    for guest in guests_df:
 
-    for fam, members in families.items():
-        for r in range(R):
-            for i in members:
-                for j in members:
-                    model.Add(x[(i, r)] == x[(j, r)])
+        best_room = None
+        best_score = float("-inf")
 
-    # =========================
-    # SOFT CONSTRAINTS (objective)
-    # =========================
-    penalties = []
+        for room in rooms:
 
-    BIG_M = 1000
+            state = room_state[room["room_id"]]
 
-    # 1. gender imbalance penalty
-    for r in range(R):
+            s = score_room(guest, room, state)
 
-        males = []
-        females = []
+            if s > best_score:
+                best_score = s
+                best_room = room["room_id"]
 
-        for g in range(G):
-            if guests[g]["gender"] == "M":
-                males.append(x[(g, r)])
-            else:
-                females.append(x[(g, r)])
-
-        model.AddHint(sum(males), 0)
-        model.AddHint(sum(females), 0)
-
-        diff = model.NewIntVar(0, 100, f"gender_diff_{r}")
-
-        model.AddAbsEquality(
-            diff,
-            sum(males) - sum(females)
-        )
-
-        penalties.append(diff * 10)
-
-    # 2. city mixing penalty
-    for r in range(R):
-        for i in range(G):
-            for j in range(i + 1, G):
-
-                if guests[i].get("city") and guests[j].get("city"):
-
-                    if guests[i]["city"] != guests[j]["city"]:
-                        penalties.append(x[(i, r)] * x[(j, r)] * 5)
-
-    # 3. unused capacity penalty
-    for r in range(R):
-        used = sum(x[(g, r)] for g in range(G))
-        capacity = int(rooms[r]["вместимость"])
-
-        empty = model.NewIntVar(0, capacity, f"empty_{r}")
-        model.Add(empty == capacity - used)
-
-        penalties.append(empty)
-
-    # 4. professor preference
-    for g in range(G):
-        if guests[g].get("status") == "professor":
-            for r in range(R):
-                if int(rooms[r]["вместимость"]) > 1:
-                    penalties.append(x[(g, r)] * 3)
-
-    # =========================
-    # OBJECTIVE
-    # =========================
-    model.Minimize(sum(penalties))
-
-    # =========================
-    # SOLVER
-    # =========================
-    solver = cp_model.CpSolver()
-    solver.parameters.max_time_in_seconds = 10
-
-    status = solver.Solve(model)
-
-    result = []
-    explanation = []
-
-    if status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-
-        for g in range(G):
-            assigned_room = None
-
-            for r in range(R):
-                if solver.Value(x[(g, r)]) == 1:
-                    assigned_room = rooms[r]["room_id"]
-
-            result.append({
-                "fio": guests[g]["fio"],
-                "gender": guests[g]["gender"],
-                "age": guests[g].get("age"),
-                "city": guests[g].get("city"),
-                "room": assigned_room
+        # assign
+        if best_room is None or best_score < -10**8:
+            allocations.append({
+                "fio": guest["fio"],
+                "room": "NO ROOM"
             })
+            continue
 
-            if assigned_room is None:
-                explanation.append((guests[g]["fio"], "NO ASSIGNMENT"))
+        state = room_state[best_room]
 
-    return result, explanation
+        state["guests"].append(guest)
+        state["cities"].add(guest.get("city"))
+        state["gender"] = guest["gender"]
+
+        if guest.get("family_id"):
+            state["families"].add(guest["family_id"])
+
+        if guest.get("status") == "professor":
+            state["has_professor"] = True
+
+        allocations.append({
+            "fio": guest["fio"],
+            "room": best_room
+        })
+
+    return pd.DataFrame(allocations)
