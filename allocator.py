@@ -29,13 +29,11 @@ def allocate_rooms(guests_df, rooms_df):
     )
 
     # -------------------------
-    # helper: room is free for full interval
+    # helper: check availability
     # -------------------------
     def is_free(room, start, end):
-        cal = room["calendar"]
-
         for d in range(start, end + 1):
-            if len(cal[d]) >= room["capacity"]:
+            if len(room["calendar"][d]) >= room["capacity"]:
                 return False
         return True
 
@@ -52,7 +50,6 @@ def allocate_rooms(guests_df, rooms_df):
         end = int(g.get("checkout"))
 
         placed = False
-        reason = None
 
         for room_id, room in rooms.items():
 
@@ -71,6 +68,7 @@ def allocate_rooms(guests_df, rooms_df):
                 break
 
         if not placed:
+
             allocations.append({
                 "fio": g["fio"],
                 "room": "NO ROOM",
@@ -83,11 +81,18 @@ def allocate_rooms(guests_df, rooms_df):
                 "reason": "нет свободной комнаты в даты проживания"
             })
 
-    return pd.DataFrame(allocations), pd.DataFrame(reasons)
-    def build_room_stats(rooms):
+    return pd.DataFrame(allocations), pd.DataFrame(reasons), rooms
+
+
+# =========================
+# ROOM STATS (ВАЖНО: ВНЕ ФУНКЦИИ allocate_rooms)
+# =========================
+def build_room_stats(room_state):
+
     result = []
 
-    for room_id, room in rooms.items():
+    for room_id, room in room_state.items():
+
         total_people = set()
 
         for day, guests in room["calendar"].items():
