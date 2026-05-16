@@ -68,7 +68,7 @@ def build_fio_index(df):
 
     return {
         norm(fio): fio
-        for fio in df["ФИО"].fillna("")
+        for fio in df["fio"].fillna("")
     }
 
 
