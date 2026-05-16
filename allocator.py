@@ -131,7 +131,7 @@ def allocate_rooms(guests_df, rooms_df):
         state["guests"].append(guest)
         state["cities"].add(guest.get("city"))
         if not state["gender"]:
-    state["gender"] = guest["gender"]
+            state["gender"] = guest["gender"]
 
         if guest.get("family_id"):
             state["families"].add(guest["family_id"])
