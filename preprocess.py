@@ -86,7 +86,7 @@ def preprocess_guests(df: pd.DataFrame):
     .astype(str)
     .str.strip()
     .str.lower()
-    .ne("не буду проживать")
+    .ne("Не буду проживать")
 )
     processed["city"] = df.get("Город", "UNKNOWN")
     processed["status"] = df.get("Статус", "student")
