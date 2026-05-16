@@ -1,20 +1,6 @@
 import pandas as pd
 import re
-
-
-# =========================================================
-# NORMALIZE COLUMNS
-# =========================================================
-def normalize_columns(df):
-    df = df.copy()
-    df.columns = (
-        df.columns.astype(str)
-        .str.replace("\n", " ", regex=False)
-        .str.replace("\ufeff", "", regex=False)
-        .str.strip()
-        .str.lower()
-    )
-    return df
+from rapidfuzz import process, fuzz
 
 
 # =========================================================
@@ -28,13 +14,36 @@ def clean(text):
 
 
 # =========================================================
-# GENDER
+# FIO NORMALIZATION (CRITICAL)
 # =========================================================
-def detect_gender(fio):
-    parts = str(fio).split()
+def normalize_fio(fio):
+    fio = clean(fio)
+    fio = fio.replace("ё", "е")
+    fio = fio.replace(".", "")
+    return fio
+
+
+def fio_variants(fio):
+    """
+    создаём варианты для лучшего матчинга
+    """
+    fio = normalize_fio(fio)
+    parts = fio.split()
+
     if not parts:
-        return "M"
-    return "F" if parts[0].lower().endswith(("а", "я")) else "M"
+        return []
+
+    surname = parts[0]
+
+    initials = "".join([p[0] for p in parts[1:] if p])
+
+    variants = [
+        surname,
+        fio,
+        surname + initials,
+    ]
+
+    return list(set(variants))
 
 
 # =========================================================
@@ -42,11 +51,7 @@ def detect_gender(fio):
 # =========================================================
 def parse_resident(v):
     v = str(v).lower()
-
-    if any(x in v for x in ["не буду", "не прожив", "не проживает", "отказ"]):
-        return False
-
-    return True
+    return not any(x in v for x in ["не буду", "не прожив", "отказ", "не планир"])
 
 
 # =========================================================
@@ -66,27 +71,26 @@ def detect_room_type(text):
 
 
 # =========================================================
-# FIO MATCH (СТАБИЛЬНЫЙ)
+# FUZZY MATCH ENGINE
 # =========================================================
-def fio_match(text, fio):
+def match_fios(text, fio_list, threshold=85):
     text = clean(text)
-    fio = clean(fio)
 
-    parts = fio.split()
-    if not parts:
-        return False
+    matches = []
 
-    surname = parts[0]
+    for fio in fio_list:
+        variants = fio_variants(fio)
 
-    if surname not in text:
-        return False
+        best = process.extractOne(
+            text,
+            variants,
+            scorer=fuzz.partial_ratio
+        )
 
-    initials = "".join([p[0] for p in parts[1:] if p])
+        if best and best[1] >= threshold:
+            matches.append(fio)
 
-    if initials:
-        return initials in text.replace(" ", "")
-
-    return True
+    return list(set(matches))
 
 
 # =========================================================
@@ -96,21 +100,19 @@ def parse_comment(comment, fio_list):
 
     text = clean(comment)
 
-    hard = []
+    hard = match_fios(text, fio_list)
+
     soft = []
     avoid = []
 
-    for fio in fio_list:
-        if fio_match(text, fio):
-            hard.append(fio)
-
     room_type = detect_room_type(text)
 
+    # жесткие правила
     if "без подсел" in text:
         room_type = 1
 
     return {
-        "hard_group": list(set(hard)),
+        "hard_group": hard,
         "soft_group": soft,
         "avoid_group": avoid,
         "room_type": room_type
@@ -122,7 +124,15 @@ def parse_comment(comment, fio_list):
 # =========================================================
 def preprocess_guests(df):
 
-    df = normalize_columns(df)
+    df = df.copy()
+
+    # normalize columns
+    df.columns = (
+        df.columns.astype(str)
+        .str.strip()
+        .str.lower()
+    )
+
     processed = pd.DataFrame()
 
     # -------------------------
@@ -141,27 +151,25 @@ def preprocess_guests(df):
     # -------------------------
     # META
     # -------------------------
-    processed["gender"] = processed["fio"].apply(detect_gender)
-
     processed["city"] = df.get("город", "unknown")
     processed["status"] = df.get("статус", "student")
 
     # -------------------------
-    # NIGHTS
+    # NIGHTS (упрощено)
     # -------------------------
     processed["nights"] = [[] for _ in range(len(processed))]
 
     # -------------------------
     # COMMENTS SAFE
     # -------------------------
-    fio_list = df["фио"].astype(str).tolist()
+    fio_list = processed["fio"].tolist()
 
     if "комментарий" in df.columns:
-        comment_col = df["комментарий"].fillna("").astype(str)
+        comments = df["комментарий"].fillna("").astype(str)
     else:
-        comment_col = pd.Series([""] * len(df))
+        comments = pd.Series([""] * len(df))
 
-    parsed = comment_col.apply(lambda c: parse_comment(c, fio_list))
+    parsed = comments.apply(lambda c: parse_comment(c, fio_list))
 
     processed["group_hard"] = [p["hard_group"] for p in parsed]
     processed["group_soft"] = [p["soft_group"] for p in parsed]
