@@ -44,11 +44,11 @@ st.subheader("Результат")
 
 st.dataframe(allocations)
 
-    allocations.to_excel(
-        "data/allocations.xlsx",
-        index=False
-    )
+allocations.to_excel(
+    "data/allocations.xlsx",
+    index=False
+)
 
-    st.success(
-        "Расселение сохранено в data/allocations.xlsx"
-    )
+st.success(
+    "Расселение сохранено в data/allocations.xlsx"
+)
