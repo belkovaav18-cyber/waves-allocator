@@ -85,12 +85,12 @@ def allocate_rooms(guests_df, rooms_df):
 
     # sort: seniors / professors first, then older
     guests_df = sorted(
-        guests_df,
-        key=lambda g: (
-            g.get("status") != "professor",
-            -(g.get("age") or 0)
-        )
+    list(guests_df),
+    key=lambda g: (
+        g.get("status") != "professor",
+        -(g.get("age") or 0)
     )
+)
 
     room_state = {
         r["room_id"]: {
