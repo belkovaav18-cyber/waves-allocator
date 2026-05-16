@@ -4,96 +4,175 @@ from datetime import datetime
 
 
 # =========================================================
-# helpers
+# SAFE COLUMNS NORMALIZATION
 # =========================================================
-def normalize_name(name: str):
-    return re.sub(r"\s+", " ", str(name).strip().lower())
+def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
+
+    df = df.copy()
+
+    df.columns = (
+        df.columns
+        .astype(str)
+        .str.replace("\n", " ", regex=False)   # убираем переносы строк
+        .str.replace("\ufeff", "", regex=False) # BOM
+        .str.strip()                           # пробелы
+    )
+
+    return df
 
 
+# =========================================================
+# SMART COLUMN FINDER
+# =========================================================
+def find_col(df, keywords):
+
+    """
+    ищет колонку по ключевым словам
+    """
+    for col in df.columns:
+        col_low = col.lower()
+        if all(k.lower() in col_low for k in keywords):
+            return col
+    return None
+
+
+# =========================================================
+# GENDER DETECT
+# =========================================================
+def detect_gender(name):
+
+    if pd.isna(name):
+        return "M"
+
+    name = str(name).strip().lower()
+
+    return "F" if name.endswith(("а", "я")) else "M"
+
+
+# =========================================================
+# GROUP PARSER (hard groups from comments)
+# =========================================================
 def extract_hard_group(comment):
-    """
-    Явные требования: "Белоножко ДФ и Черновым АС"
-    """
+
     if not comment:
         return []
 
     text = str(comment).lower()
 
-    # ищем куски похожие на ФИО
-    matches = re.findall(r"[а-яё]{4,}", text, re.IGNORECASE)
+    # ищем все слова похожие на ФИО / фамилии
+    names = re.findall(r"[а-яё]{4,}", text, re.IGNORECASE)
 
     stop = {
         "прошу", "поселить", "вместе", "пожалуйста",
-        "спасибо", "меня", "моим", "соавтором"
+        "спасибо", "меня", "моим", "соавтором", "пожалуйста"
     }
 
-    names = []
+    cleaned = []
 
-    for m in matches:
-        m = m.strip()
-        if m in stop:
+    for n in names:
+        n = n.strip()
+
+        if n in stop:
             continue
-        if len(m) < 4:
+
+        if len(n) < 4:
             continue
-        names.append(normalize_name(m))
 
-    return list(set(names))
+        cleaned.append(n.lower())
 
-
-def extract_soft_group(comment):
-    """
-    "соавтор", "вместе с коллегой"
-    """
-    if not comment:
-        return []
-
-    text = str(comment).lower()
-
-    soft_keywords = ["соавтор", "коллег", "вместе"]
-
-    if any(k in text for k in soft_keywords):
-        # мягкая связь, пока просто флаг
-        return ["soft_link"]
-
-    return []
+    return list(set(cleaned))
 
 
 # =========================================================
-# core preprocess
+# MAIN PREPROCESS
 # =========================================================
 def preprocess_guests(df):
 
     df = df.copy()
 
+    # -----------------------------
+    # 1. clean columns
+    # -----------------------------
+    df = normalize_columns(df)
+
+    # -----------------------------
+    # 2. find columns safely
+    # -----------------------------
+    col_fio = find_col(df, ["фио"])
+    col_last = find_col(df, ["фам"])
+    col_first = find_col(df, ["имя"])
+    col_mid = find_col(df, ["отч"])
+    col_city = find_col(df, ["город"])
+    col_status = find_col(df, ["стат"])
+    col_comment = find_col(df, ["коммент"])
+    col_birth = find_col(df, ["рожд"])
+    col_checkin = find_col(df, ["заезд"])
+    col_checkout = find_col(df, ["отъезд"])
+    col_nights = find_col(df, ["ноч"])
+
+    # -----------------------------
+    # 3. build FIO safely
+    # -----------------------------
+    if col_fio:
+        fio = df[col_fio]
+    else:
+        last = df[col_last] if col_last else ""
+        first = df[col_first] if col_first else ""
+        mid = df[col_mid] if col_mid else ""
+
+        fio = (
+            last.fillna("") + " " +
+            first.fillna("") + " " +
+            mid.fillna("")
+        ).str.strip()
+
     processed = pd.DataFrame()
+    processed["fio"] = fio
 
-    processed["fio"] = (
-        df["Фамилия"].fillna("") + " " +
-        df["Имя"].fillna("") + " " +
-        df["Отчество"].fillna("")
-    ).str.strip()
+    # -----------------------------
+    # 4. gender
+    # -----------------------------
+    if col_first:
+        processed["gender"] = df[col_first].apply(detect_gender)
+    else:
+        processed["gender"] = "M"
 
-    processed["gender"] = df["Имя"].apply(
-        lambda x: "F" if str(x).lower().strip().endswith(("а", "я")) else "M"
-    )
+    # -----------------------------
+    # 5. city / status
+    # -----------------------------
+    processed["city"] = df[col_city] if col_city else "UNKNOWN"
+    processed["status"] = df[col_status] if col_status else "student"
 
-    processed["birthdate"] = pd.to_datetime(df.get("Дата рождения"), errors="coerce")
+    # -----------------------------
+    # 6. dates
+    # -----------------------------
+    processed["checkin"] = pd.to_datetime(
+        df[col_checkin], errors="coerce"
+    ) if col_checkin else None
 
-    processed["checkin"] = pd.to_datetime(df.get("Заезд"), errors="coerce")
-    processed["checkout"] = pd.to_datetime(df.get("Отъезд"), errors="coerce")
+    processed["checkout"] = pd.to_datetime(
+        df[col_checkout], errors="coerce"
+    ) if col_checkout else None
 
-    processed["nights"] = df.get("Ночей", 0).fillna(0).astype(int)
+    # -----------------------------
+    # 7. nights
+    # -----------------------------
+    if col_nights:
+        processed["nights"] = pd.to_numeric(
+            df[col_nights],
+            errors="coerce"
+        ).fillna(0).astype(int)
+    else:
+        processed["nights"] = 0
 
-    processed["city"] = df.get("Город", "UNKNOWN").fillna("UNKNOWN")
+    # -----------------------------
+    # 8. comments
+    # -----------------------------
+    processed["comment"] = df[col_comment] if col_comment else ""
 
-    processed["status"] = df.get("Статус", "student").fillna("student")
-
-    processed["comment"] = df.get("Комментарий", "").fillna("")
-
-    # =====================================================
-    # GROUPS
-    # =====================================================
+    # -----------------------------
+    # 9. groups
+    # -----------------------------
     processed["group_hard"] = processed["comment"].apply(extract_hard_group)
-    processed["group_soft"] = processed["comment"].apply(extract_soft_group)
 
     return processed
