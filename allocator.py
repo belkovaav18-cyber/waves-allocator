@@ -2,6 +2,10 @@ import pandas as pd
 from collections import defaultdict
 def allocate_rooms(guests_df, rooms_df):
 
+    # 🔥 FIX: гарантируем правильный формат
+    guests_df = list(guests_df)
+    rooms_df = list(rooms_df)
+    
     # =========================
     # NORMALIZE INPUT
     # =========================
