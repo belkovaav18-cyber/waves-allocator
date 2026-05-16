@@ -1,3 +1,4 @@
+import pandas as pd
 def allocate_rooms(guests_df, rooms_df):
 
     guests_df = list(guests_df)
