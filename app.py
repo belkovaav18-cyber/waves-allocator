@@ -2,73 +2,36 @@ import streamlit as st
 import pandas as pd
 
 from sheets import load_guests, save_results
-from preprocess import preprocess
+from preprocess import preprocess_guests
 from solver import solve
 
 
-SHEET_ID = "1lF4SV24wTo5OwsidQ7UPqBVaGzdw_fBSx0OuBJJ4cWg"
-TAB = "Sheet"
+SHEET_ID = "YOUR_SHEET_ID"
+TAB = "Form Responses 1"
 
-st.set_page_config(layout="wide")
+st.title("🏨 Расселение")
 
-st.title("🏨 Система расселения")
-
-
-# ---------------------------------------------------
-# LOAD ROOMS
-# ---------------------------------------------------
-rooms = pd.read_excel(
-    "data/rooms.xlsx",
-    engine="openpyxl"
-)
+rooms = pd.read_excel("data/rooms.xlsx")
 
 st.subheader("Комнаты")
 st.dataframe(rooms)
 
-
-# ---------------------------------------------------
-# LOAD GUESTS
-# ---------------------------------------------------
 raw = load_guests(SHEET_ID, TAB)
-
-guests = preprocess(raw)
+guests = preprocess_guests(raw)
 
 st.subheader("Гости")
 st.dataframe(guests)
 
 
-# ---------------------------------------------------
-# BUTTON
-# ---------------------------------------------------
 if st.button("🚀 Расселить"):
 
-    try:
+    result = solve(guests, rooms)
 
-        result = solve(guests, rooms)
+    st.subheader("Result")
+    st.dataframe(result)
 
-        st.subheader("Result")
+    result.to_excel("data/result.xlsx", index=False)
 
-        st.dataframe(result)
+    save_results(SHEET_ID, "Result", result)
 
-        # -----------------------------------------
-        # excel
-        # -----------------------------------------
-        result.to_excel(
-            "data/result.xlsx",
-            index=False
-        )
-
-        # -----------------------------------------
-        # google sheets
-        # -----------------------------------------
-        save_results(
-            SHEET_ID,
-            "Result",
-            result
-        )
-
-        st.success("Готово")
-
-    except Exception as e:
-
-        st.exception(e)
+    st.success("Готово")
