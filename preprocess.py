@@ -128,7 +128,7 @@ def preprocess_guests(df):
     # =====================
     processed["checkin"] = pd.to_datetime(df["Заезд"], errors="coerce")
     processed["checkout"] = pd.to_datetime(df["Отъезд"], errors="coerce")
-    processed["nights"] = df["Ночей"]
+    processed["nights"] = pd.to_numeric(df["Ночей"], errors="coerce").fillna(0).astype(int)
 
     # =====================
     # NEW FIELDS FOR YOUR ALGORITHM
