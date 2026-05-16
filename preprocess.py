@@ -5,7 +5,7 @@ import re
 # =========================================================
 # CLEAN COLUMNS
 # =========================================================
-def normalize_columns(df):
+def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
 
     df = df.copy()
 
@@ -13,6 +13,7 @@ def normalize_columns(df):
         df.columns
         .astype(str)
         .str.replace("\n", " ", regex=False)
+        .str.replace("\ufeff", "", regex=False)
         .str.strip()
     )
 
@@ -20,61 +21,102 @@ def normalize_columns(df):
 
 
 # =========================================================
-# EXTRACT NIGHTS FROM WIDE TABLE
+# NORMALIZATION HELPERS
+# =========================================================
+def norm(x):
+    return re.sub(r"\s+", " ", str(x).strip().lower())
+
+
+# =========================================================
+# FIND NIGHT SELECTIONS
 # =========================================================
 def extract_nights(row):
 
     nights = []
 
-    for col, val in row.items():
+    for col in row.index:
+
+        col_str = str(col).lower()
+        val = row[col]
 
         if pd.isna(val):
             continue
 
         val = str(val).strip().lower()
 
-        # интересуют только отметки проживания
-        if "комната" in col.lower():
+        # нас интересуют только колонки проживания
+        if "комната" not in col_str:
+            continue
 
-            # если человек выбрал проживание
-            if val != "" and val.lower() not in ["нет", "0", "-"]:
+        # если отмечено проживание
+        if val in ["", "нет", "0", "-", "false"]:
+            continue
 
-                # вытаскиваем ночь из названия колонки
-                match = re.search(r"ночь на (\d+)", col)
+        # вытаскиваем номер ночи
+        match = re.search(r"ночь на (\d+)", col_str)
 
-                if match:
-                    nights.append(int(match.group(1)))
+        if match:
+            nights.append(int(match.group(1)))
 
-    return sorted(list(set(nights)))
+    return sorted(set(nights))
 
 
 # =========================================================
-# GROUP PARSER
+# HARD GROUPS (REAL FIO MATCHING)
 # =========================================================
-def extract_hard_group(comment):
+def build_fio_index(df):
+
+    return {
+        norm(fio): fio
+        for fio in df["ФИО"].fillna("")
+    }
+
+
+def extract_hard_groups(comment, fio_index):
 
     if not comment:
         return []
 
-    text = str(comment).lower()
+    text = norm(comment)
 
-    names = re.findall(r"[а-яё]{4,}", text)
+    result = []
 
-    stop = {
-        "прошу", "поселить", "вместе",
-        "пожалуйста", "спасибо", "соавтором"
-    }
+    for fio_norm, fio_original in fio_index.items():
 
-    return [
-        n for n in names
-        if n not in stop and len(n) > 3
-    ]
+        # пробуем матч по фамилии + имени (основной кейс)
+        parts = fio_norm.split()
+
+        if len(parts) == 0:
+            continue
+
+        # минимум фамилия + имя
+        key = " ".join(parts[:2])
+
+        if key and key in text:
+            result.append(fio_original)
+
+    return result
 
 
 # =========================================================
-# MAIN
+# GENDER (простая эвристика)
 # =========================================================
-def preprocess_guests(df):
+def detect_gender(fio):
+
+    parts = str(fio).strip().split()
+
+    if not parts:
+        return "M"
+
+    name = parts[0].lower()
+
+    return "F" if name.endswith(("а", "я")) else "M"
+
+
+# =========================================================
+# MAIN PREPROCESS
+# =========================================================
+def preprocess_guests(df: pd.DataFrame) -> pd.DataFrame:
 
     df = normalize_columns(df)
 
@@ -88,12 +130,10 @@ def preprocess_guests(df):
     # -----------------------------
     # gender
     # -----------------------------
-    processed["gender"] = df["ФИО"].apply(
-        lambda x: "F" if str(x).strip().split()[0].endswith(("а", "я")) else "M"
-    )
+    processed["gender"] = processed["fio"].apply(detect_gender)
 
     # -----------------------------
-    # status / city
+    # optional fields
     # -----------------------------
     processed["city"] = df.get("Город", "UNKNOWN")
     processed["status"] = df.get("Статус", "student")
@@ -104,13 +144,17 @@ def preprocess_guests(df):
     processed["comment"] = df.get("Комментарий", "")
 
     # -----------------------------
-    # NIGHTS (ВАЖНО)
+    # nights (ВАЖНОЕ ИЗМЕНЕНИЕ)
     # -----------------------------
     processed["nights"] = df.apply(extract_nights, axis=1)
 
     # -----------------------------
-    # groups
+    # HARD GROUPS (FIXED)
     # -----------------------------
-    processed["group_hard"] = processed["comment"].apply(extract_hard_group)
+    fio_index = build_fio_index(processed)
+
+    processed["group_hard"] = processed["comment"].apply(
+        lambda c: extract_hard_groups(c, fio_index)
+    )
 
     return processed
