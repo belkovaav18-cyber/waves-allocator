@@ -1,4 +1,24 @@
 import pandas as pd
+def explain_rejection(guest, room_state, room, capacity):
+    reasons = []
+
+    if len(room_state["guests"]) >= capacity:
+        reasons.append("нет свободных мест")
+
+    if room_state["has_professor"] and guest.get("status") == "student":
+        reasons.append("в комнате есть профессор (студентам нельзя)")
+
+    if guest.get("status") == "professor" and len(room_state["guests"]) > 0:
+        reasons.append("профессор должен жить один")
+
+    city = guest.get("city")
+    if city and room_state["cities"] and city not in room_state["cities"]:
+        reasons.append("конфликт городов")
+
+    if room_state["gender"] and room_state["gender"] != guest.get("gender"):
+        reasons.append("конфликт пола")
+
+    return reasons if reasons else ["не найдено подходящей комнаты"]
 def allocate_rooms(guests_df, rooms_df):
 
     guests_df = list(guests_df)
