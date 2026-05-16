@@ -31,10 +31,14 @@ st.dataframe(guests)
 
 if st.button("Авторасселение"):
 
-    allocations = allocate_rooms(guests, rooms)
+    allocations, explanation = allocate_rooms(guests.to_dict("records"), rooms.to_dict("records"))
 
-st.subheader("Результат")
-st.dataframe(allocations)
+    st.subheader("Результат")
+    st.dataframe(allocations)
+
+    if explanation:
+        st.subheader("Почему не оптимально распределено")
+        st.write(explanation)
 
 save_allocations_to_gsheet(allocations)
 
