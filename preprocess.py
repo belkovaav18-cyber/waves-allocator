@@ -1,14 +1,11 @@
 import pandas as pd
 import re
+from comment_engine import parse_comment
 
 
 def norm_cols(df):
     df = df.copy()
-    df.columns = (
-        df.columns.astype(str)
-        .str.replace("\ufeff", "", regex=False)
-        .str.strip()
-    )
+    df.columns = df.columns.astype(str).str.strip()
     return df
 
 
@@ -46,17 +43,7 @@ def extract_nights(row):
     return list(set(nights))
 
 
-# ---------------- SAFE COMMENT PARSER ----------------
-def parse_comment(comment):
-    # пока заглушка (потом подключишь LLM/regex engine)
-    return {
-        "hard_group": [],
-        "soft_group": [],
-        "avoid_group": [],
-        "room_type": None
-    }
-
-
+# ---------------- MAIN ----------------
 def preprocess_guests(df):
 
     df = norm_cols(df)
@@ -76,19 +63,21 @@ def preprocess_guests(df):
 
     processed["nights"] = df.apply(extract_nights, axis=1)
 
-    # comments safe
+    # ---------------- COMMENTS ENGINE ----------------
     comments = col("Комментарий", "").fillna("")
 
-    parsed = comments.apply(parse_comment)
+    fio_list = processed["fio"].tolist()
+
+    parsed = comments.apply(lambda c: parse_comment(c, fio_list))
 
     processed["group_hard"] = parsed.apply(lambda x: x["hard_group"])
     processed["group_soft"] = parsed.apply(lambda x: x["soft_group"])
     processed["group_avoid"] = parsed.apply(lambda x: x["avoid_group"])
     processed["room_type"] = parsed.apply(lambda x: x["room_type"])
 
-    # 🔥 FIX: без pandas assign list error
-    processed.loc[processed["resident"] == False, "nights"] = processed.loc[
-        processed["resident"] == False, "nights"
+    # non-residents
+    processed.loc[~processed["resident"], "nights"] = processed.loc[
+        ~processed["resident"], "nights"
     ].apply(lambda _: [])
 
     return processed
