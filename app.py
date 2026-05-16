@@ -41,10 +41,10 @@ final_result = pd.concat([
 ])
 
 st.subheader("Result")
-st.dataframe(result)
+st.dataframe(final_result)
 
 st.subheader("Debug")
 st.json(debug)
 
-save_results(SHEET_ID, "Result", result)
+save_results(SHEET_ID, "Result", final_result)
 st.success("Готово")
