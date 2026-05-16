@@ -15,7 +15,6 @@ st.set_page_config(
 
 st.title("Система расселения")
 
-
 # =========================
 # LOAD DATA
 # =========================
@@ -23,13 +22,11 @@ rooms = pd.read_excel("data/rooms.xlsx", engine="openpyxl")
 raw_guests = load_guests_from_gsheet()
 guests = preprocess_guests(raw_guests)
 
-
 st.subheader("Комнаты")
 st.dataframe(rooms)
 
 st.subheader("Гости")
 st.dataframe(guests)
-
 
 # =========================
 # STATE
@@ -40,35 +37,46 @@ if "allocations" not in st.session_state:
 if "rejections" not in st.session_state:
     st.session_state.rejections = None
 
+if "room_stats" not in st.session_state:
+    st.session_state.room_stats = None
+
 
 # =========================
 # BUTTON
 # =========================
 if st.button("Авторасселение"):
 
-    allocations, reasons = allocate_rooms(
-      guests.to_dict("records"),
-      rooms.to_dict("records")
-  )
+    allocations, rejections, room_state = allocate_rooms(
+        guests.to_dict("records"),
+        rooms.to_dict("records")
+    )
 
-    stats = build_room_stats(room_state)
-
-    room_stats = build_room_stats(allocations, rooms)
+    room_stats = build_room_stats(room_state)
 
     st.session_state.allocations = allocations
     st.session_state.rejections = rejections
+    st.session_state.room_stats = room_stats
 
-    st.subheader("Результат")
+    # =========================
+    # OUTPUT
+    # =========================
+    st.subheader("📊 Результат расселения")
     st.dataframe(allocations)
 
-    # save google sheets
+    st.subheader("🏨 Загруженность комнат")
+    st.dataframe(room_stats)
+
+    st.bar_chart(room_stats.set_index("room_id")["people_count"])
+
+    # =========================
+    # SAVE
+    # =========================
     try:
         save_allocations_to_gsheet(allocations)
         st.success("Сохранено в Google Sheets")
     except Exception as e:
         st.error(f"Google Sheets ошибка: {e}")
 
-    # save local
     try:
         allocations.to_excel("data/allocations.xlsx", index=False)
         st.success("Сохранено в Excel")
@@ -86,29 +94,22 @@ if st.session_state.rejections is not None:
     st.dataframe(st.session_state.rejections)
 
     for r in st.session_state.rejections.to_dict("records"):
-        st.write("—")
+        st.write("---")
         st.write(f"👤 {r['fio']}")
         st.write("Причины:")
-        for reason in r["reasons"]:
+        for reason in r.get("reasons", []):
             st.write(f"• {reason}")
 
 
 # =========================
-# LAST RESULT
+# LAST RESULT (CACHE)
 # =========================
 if st.session_state.allocations is not None:
-    st.subheader("Последнее расселение")
+
+    st.subheader("📦 Последний результат")
     st.dataframe(st.session_state.allocations)
-    st.subheader("🏨 Загруженность комнат")
 
-    st.dataframe(room_stats)
+if st.session_state.room_stats is not None:
 
-    st.bar_chart(room_stats.set_index("room_id")["occupied"])
-    st.subheader("Результат")
-    st.dataframe(allocations)
-
-    st.subheader("Кто не заселился и почему")
-    st.dataframe(reasons)
-
-    st.subheader("Заполненность комнат")
-    st.dataframe(stats)
+    st.subheader("📈 Статистика комнат")
+    st.dataframe(st.session_state.room_stats)
