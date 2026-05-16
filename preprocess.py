@@ -92,44 +92,20 @@ def parse_room_type(comment):
 
 
 # =========================================================
-# COMMENT ENGINE (очень простой, но рабочий)
+# COMMENT ENGINE SAFE
 # =========================================================
-def parse_comment(comment, fio_list):
 
-    text = str(comment).lower()
+fio_list = processed["fio"].tolist()
 
-    hard = []
-    soft = []
-    avoid = []
+if "Комментарий" in df.columns:
+    comment_series = df["Комментарий"].fillna("")
+else:
+    comment_series = pd.Series([""] * len(processed))
 
-    for fio in fio_list:
-        fio_l = fio.lower()
 
-        if fio_l in text:
-            hard.append(fio)
-
-    # эвристики
-    if "без подсел" in text or "одномест" in text:
-        return {
-            "hard_group": [],
-            "soft_group": [],
-            "avoid_group": [],
-            "room_type": 1
-        }
-
-    if "двухмест" in text:
-        room_type = 2
-    elif "трехмест" in text:
-        room_type = 3
-    else:
-        room_type = None
-
-    return {
-        "hard_group": hard,
-        "soft_group": soft,
-        "avoid_group": avoid,
-        "room_type": room_type
-    }
+parsed = comment_series.apply(
+    lambda c: parse_comment(c, fio_list)
+)
 
 
 # =========================================================
