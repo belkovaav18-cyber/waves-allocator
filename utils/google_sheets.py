@@ -40,8 +40,8 @@ def get_client():
     return gspread.authorize(creds)
 
 
-SPREADSHEET_ID = "10cBNkDQ3fOCajBIjeAsaCPsivEfVShGZ-BHmLcC6l5s"
-SHEET_NAME = "Лист1"
+SPREADSHEET_ID = "1lF4SV24wTo5OwsidQ7UPqBVaGzdw_fBSx0OuBJJ4cWg"
+SHEET_NAME = "Sheet"
 
 
 # =========================
