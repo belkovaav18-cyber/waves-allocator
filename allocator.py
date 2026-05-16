@@ -8,17 +8,19 @@ def allocate_rooms(guests_df, rooms_df):
     reasons = []
 
     # -------------------------
-    # rooms
+    # rooms (list[dict] ВМЕСТО DataFrame)
     # -------------------------
     rooms = {}
-    for _, r in rooms_df.iterrows():
+
+    for r in rooms_df:   # ❗ FIX HERE
+
         rooms[r["room_id"]] = {
             "capacity": int(r["вместимость"]),
-            "calendar": defaultdict(list),  # day -> guests
+            "calendar": defaultdict(list),
         }
 
     # -------------------------
-    # sort by priority
+    # sort
     # -------------------------
     guests_df = sorted(
         guests_df,
@@ -29,20 +31,16 @@ def allocate_rooms(guests_df, rooms_df):
     )
 
     # -------------------------
-    # helper: check availability
-    # -------------------------
     def is_free(room, start, end):
         for d in range(start, end + 1):
             if len(room["calendar"][d]) >= room["capacity"]:
                 return False
         return True
 
-    def add_guest(room, guest, start, end):
+    def add(room, guest, start, end):
         for d in range(start, end + 1):
             room["calendar"][d].append(guest)
 
-    # -------------------------
-    # main loop
     # -------------------------
     for g in guests_df:
 
@@ -55,7 +53,7 @@ def allocate_rooms(guests_df, rooms_df):
 
             if is_free(room, start, end):
 
-                add_guest(room, g, start, end)
+                add(room, g, start, end)
 
                 allocations.append({
                     "fio": g["fio"],
@@ -78,11 +76,10 @@ def allocate_rooms(guests_df, rooms_df):
 
             reasons.append({
                 "fio": g["fio"],
-                "reason": "нет свободной комнаты в даты проживания"
+                "reason": "нет свободной комнаты"
             })
 
     return pd.DataFrame(allocations), pd.DataFrame(reasons), rooms
-
 
 # =========================
 # ROOM STATS (ВАЖНО: ВНЕ ФУНКЦИИ allocate_rooms)
