@@ -32,7 +32,7 @@ if st.button("🚀 Оптимизировать расселение"):
     result.to_excel("data/output.xlsx", index=False)
 
     try:
-        save_results("Result", result)
+        save_results(SHEET_ID, "Result", result)
         st.success("Сохранено в Google Sheets")
     except Exception as e:
         st.error(str(e))
