@@ -1,35 +1,36 @@
 import streamlit as st
 import pandas as pd
 
-from allocator import allocate_rooms, build_room_stats
-from preprocess import preprocess_guests
-from utils.google_sheets import load_guests_from_gsheet
+from sheets import load_guests, save_results
+from preprocess import preprocess
+from solver import solve
 
 
-st.set_page_config(page_title="Расселение", layout="wide")
+SHEET_ID = "YOUR_SHEET_ID"
+TAB = "Form Responses 1"
 
-st.title("🏨 Авторасселение")
+
+st.title("🏨 OR-Tools расселение")
 
 rooms = pd.read_excel("data/rooms.xlsx")
 
-raw = load_guests_from_gsheet()
-guests = preprocess_guests(raw)
+raw = load_guests(SHEET_ID, TAB)
+guests = preprocess(raw)
 
 st.subheader("Гости")
 st.dataframe(guests)
 
-if st.button("Расселить"):
+if st.button("🚀 Оптимизировать расселение"):
 
-    allocations, rejections, state = allocate_rooms(
-        guests.to_dict("records"),
-        rooms.to_dict("records")
-    )
+    result = solve(guests, rooms)
 
-    st.subheader("Расселение")
-    st.dataframe(allocations)
+    st.subheader("Результат")
+    st.dataframe(result)
 
-    st.subheader("Отказы")
-    st.dataframe(rejections)
+    result.to_excel("data/output.xlsx", index=False)
 
-    st.subheader("Комнаты")
-    st.dataframe(build_room_stats(state))
+    try:
+        save_results(SHEET_ID, "Result", result)
+        st.success("Сохранено в Google Sheets")
+    except Exception as e:
+        st.error(str(e))
