@@ -94,6 +94,8 @@ def solve(guests_df, rooms_df):
     solver.parameters.max_time_in_seconds = 10
 
     status = solver.Solve(model)
+    if isinstance(rooms_df, pd.DataFrame):
+        rooms_df = rooms_df.to_dict("records")
 
     if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
         return pd.DataFrame([{"error": "no solution"}])
