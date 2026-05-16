@@ -6,7 +6,7 @@ from preprocess import preprocess
 from solver import solve
 
 SHEET_ID = "1lF4SV24wTo5OwsidQ7UPqBVaGzdw_fBSx0OuBJJ4cWg"
-TAB = "Form Responses 1"
+TAB = "Sheet"
 
 raw = load_guests(SHEET_ID, TAB)
 
