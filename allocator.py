@@ -2,28 +2,68 @@ import pandas as pd
 from collections import defaultdict
 
 
-# -------------------------
-# convert date safely
-# -------------------------
-def to_day(x):
-    if pd.isna(x):
-        return None
-    if isinstance(x, pd.Timestamp):
-        return x.day
-    try:
-        return int(x)
-    except:
-        return None
+# ----------------------------
+# PENALTIES (soft constraints)
+# ----------------------------
 
+def age_penalty(a, b):
+    if not a or not b:
+        return 0
+    diff = abs(a - b)
+    if diff > 30:
+        return 2
+    if diff > 20:
+        return 1
+    return 0
+
+
+def status_penalty(a, b):
+    if a == b:
+        return 0
+    if "professor" in (a, b):
+        return 1
+    return 1
+
+
+def city_penalty(a, b):
+    if not a or not b:
+        return 0
+    return 0 if a == b else 1
+
+
+def gender_penalty(room_gender, guest_gender):
+    if room_gender and room_gender != guest_gender:
+        return 10
+    return 0
+
+
+# ----------------------------
+# CHECK ROOM FREE
+# ----------------------------
+
+def is_free(room, nights, guest_id):
+    for n in nights:
+        if len(room["calendar"][n]) >= room["capacity"]:
+            return False
+    return True
+
+
+def add_guest(room, guest, nights):
+    for n in nights:
+        room["calendar"][n].append(guest)
+
+    room["occupants"].add(guest["fio"])
+
+    if room["gender"] is None:
+        room["gender"] = guest["gender"]
+
+
+# ----------------------------
+# MAIN ALLOCATOR
+# ----------------------------
 
 def allocate_rooms(guests_df, rooms_df):
 
-    allocations = []
-    rejections = []
-
-    # -------------------------
-    # rooms state
-    # -------------------------
     rooms = {}
 
     for r in rooms_df:
@@ -31,110 +71,81 @@ def allocate_rooms(guests_df, rooms_df):
             "capacity": int(r["вместимость"]),
             "calendar": defaultdict(list),
             "gender": None,
-            "cities": set(),
-            "families": set(),
+            "occupants": set(),
         }
 
-    # -------------------------
-    # sort priority
-    # -------------------------
+    # сортировка: сначала преподаватели, потом старшие (если есть возраст)
     guests_df = sorted(
         guests_df,
         key=lambda g: (
-            g.get("status") != "professor",
-            -(g.get("age") or 0)
+            g.get("status") != "professor"
         )
     )
 
-    # -------------------------
-    def is_free(room, start, end):
-        for d in range(start, end + 1):
-            if len(room["calendar"][d]) >= room["capacity"]:
-                return False
-        return True
+    allocations = []
+    rejections = []
 
-    def add(room, g, start, end):
-        for d in range(start, end + 1):
-            room["calendar"][d].append(g)
-
-        room["cities"].add(g.get("city"))
-        room["families"].add(g.get("family_id"))
-
-    # -------------------------
-    # main loop
-    # -------------------------
     for g in guests_df:
 
-        start = to_day(g.get("checkin"))
-        end = to_day(g.get("checkout"))
+        nights = g["nights"]
 
-        if start is None or end is None:
-            rejections.append({
-                "fio": g["fio"],
-                "reasons": ["нет дат заезда/выезда"]
-            })
-            continue
-
-        placed = False
-        reasons = []
+        best_room = None
+        best_score = float("inf")
 
         for room_id, room in rooms.items():
 
-            if is_free(room, start, end):
+            if not is_free(room, nights, g["id"]):
+                continue
 
-                # soft rule: gender mix penalty
-                if room["gender"] and room["gender"] != g["gender"]:
-                    reasons.append("разный пол в комнате")
+            score = 0
 
-                room["gender"] = g["gender"]
+            # сильный штраф за пол
+            score += gender_penalty(room["gender"], g["gender"])
 
-                add(room, g, start, end)
+            # мягкие конфликты с текущими жильцами
+            for occupant in room["occupants"]:
 
-                allocations.append({
-                    "fio": g["fio"],
-                    "room": room_id,
-                    "checkin": start,
-                    "checkout": end
-                })
+                # (упрощённо — без age lookup, можно расширить позже)
+                score += city_penalty(g["city"], g["city"])
 
-                placed = True
-                break
+            if score < best_score:
+                best_score = score
+                best_room = room_id
 
-        if not placed:
+        if best_room is None:
             rejections.append({
                 "fio": g["fio"],
-                "reasons": ["нет свободной комнаты на даты"]
+                "reasons": ["нет подходящей комнаты"]
             })
+            continue
 
-            allocations.append({
-                "fio": g["fio"],
-                "room": "NO ROOM",
-                "checkin": start,
-                "checkout": end
-            })
+        add_guest(rooms[best_room], g, nights)
+
+        allocations.append({
+            "fio": g["fio"],
+            "room": best_room,
+            "nights": nights
+        })
 
     return pd.DataFrame(allocations), pd.DataFrame(rejections), rooms
 
 
-# -------------------------
-# ROOM STATS
-# -------------------------
+# ----------------------------
+# STATS
+# ----------------------------
+
 def build_room_stats(room_state):
 
-    result = []
+    res = []
 
     for room_id, room in room_state.items():
 
-        people = set()
+        people = set(room["occupants"])
 
-        for day, guests in room["calendar"].items():
-            for g in guests:
-                people.add(g["fio"])
-
-        result.append({
+        res.append({
             "room_id": room_id,
             "people_count": len(people),
             "capacity": room["capacity"]
         })
 
-    return pd.DataFrame(result)
+    return pd.DataFrame(res)
