@@ -27,9 +27,18 @@ st.dataframe(guests_df)
 if st.button("🚀 Расселить"):
 
     result, debug = smart_solve(
-        guests_df.to_dict("records"),
-        rooms
-    )
+    guests_for_solver.to_dict("records"),
+    rooms
+)
+
+# добавляем нерезидентов в итог
+non_residents_result = non_residents.copy()
+non_residents_result["room_id"] = "не проживает"
+
+final_result = pd.concat([
+    result,
+    non_residents_result[["fio", "room_id"]]
+])
 
     st.subheader("Result")
     st.dataframe(result)
