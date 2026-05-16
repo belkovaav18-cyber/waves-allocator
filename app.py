@@ -12,6 +12,7 @@ TAB = "Sheet"
 st.title("🏨 Расселение")
 
 rooms = pd.read_excel("data/rooms.xlsx")
+rooms = rooms.to_dict("records")
 
 st.subheader("Комнаты")
 st.dataframe(rooms)
