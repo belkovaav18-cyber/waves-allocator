@@ -71,6 +71,8 @@ def solve(guests_df, rooms_df):
 
     status = solver.Solve(model)
 
+    print("SOLVER STATUS:", status)
+
     result = []
 
     for g in range(len(guests)):
