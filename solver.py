@@ -3,6 +3,9 @@ import pandas as pd
 from config import WEIGHTS
 
 
+# =========================================================
+# COST
+# =========================================================
 def conflict_cost(a, b):
     cost = 0
 
@@ -18,6 +21,9 @@ def conflict_cost(a, b):
     return cost
 
 
+# =========================================================
+# SOLVER
+# =========================================================
 def solve(guests, rooms):
 
     model = cp_model.CpModel()
@@ -27,7 +33,6 @@ def solve(guests, rooms):
 
     x = {}
 
-    # decision vars
     for g in G:
         for r in R:
             x[g, r] = model.NewBoolVar(f"x_{g}_{r}")
@@ -44,24 +49,13 @@ def solve(guests, rooms):
     objective = []
 
     # =====================================================
-    # ROOM TYPE CONSTRAINT
-    # =====================================================
-    for g in G:
-        req = guests[g].get("room_type")
-
-        if req:
-            for r in R:
-                cap = int(rooms[r]["вместимость"])
-                if cap != req:
-                    model.Add(x[g, r] == 0)
-
-    # =====================================================
-    # HARD CONFLICTS
+    # CONFLICTS
     # =====================================================
     for g1 in G:
         for g2 in range(g1 + 1, len(guests)):
 
             cost = conflict_cost(guests[g1], guests[g2])
+
             if cost == 0:
                 continue
 
@@ -75,47 +69,55 @@ def solve(guests, rooms):
                 objective.append(cost * p)
 
     # =====================================================
-    # SOFT BONUS
+    # SOFT GROUP (BONUS)
     # =====================================================
     for g in G:
         for other in guests[g].get("group_soft", []):
 
-            if other not in [x["fio"] for x in guests]:
-                continue
-
-            j = next(i for i in G if guests[i]["fio"] == other)
-
-            if g >= j:
+            if other not in guests:
                 continue
 
             for r in R:
-                t = model.NewBoolVar(f"soft_{g}_{j}_{r}")
+                t = model.NewBoolVar(f"soft_{g}_{other}_{r}")
 
                 model.Add(t <= x[g, r])
-                model.Add(t <= x[j, r])
-                model.Add(t >= x[g, r] + x[j, r] - 1)
+                model.Add(t <= x[other, r])
+                model.Add(t >= x[g, r] + x[other, r] - 1)
 
                 objective.append(-30 * t)
 
     # =====================================================
-    # AVOID PENALTY
+    # AVOID GROUP (PENALTY)
     # =====================================================
     for g in G:
         for other in guests[g].get("group_avoid", []):
 
-            if other not in [x["fio"] for x in guests]:
+            if other not in guests:
                 continue
 
-            j = next(i for i in G if guests[i]["fio"] == other)
-
             for r in R:
-                t = model.NewBoolVar(f"avoid_{g}_{j}_{r}")
+                t = model.NewBoolVar(f"avoid_{g}_{other}_{r}")
 
                 model.Add(t <= x[g, r])
-                model.Add(t <= x[j, r])
-                model.Add(t >= x[g, r] + x[j, r] - 1)
+                model.Add(t <= x[other, r])
+                model.Add(t >= x[g, r] + x[other, r] - 1)
 
                 objective.append(100 * t)
+
+    # =====================================================
+    # ROOM TYPE CONSTRAINT
+    # =====================================================
+    for g in G:
+        req = guests[g].get("room_type")
+
+        if req is None:
+            continue
+
+        for r in R:
+            cap = int(rooms[r]["вместимость"])
+
+            if cap != req:
+                model.Add(x[g, r] == 0)
 
     model.Minimize(sum(objective))
 
@@ -136,13 +138,5 @@ def solve(guests, rooms):
                     "fio": guests[g]["fio"],
                     "room_id": rooms[r]["room_id"]
                 })
-
-    # non-residents
-    for g in guests:
-        if not g.get("resident", True):
-            result.append({
-                "fio": g["fio"],
-                "room_id": "не проживает"
-            })
 
     return pd.DataFrame(result)
