@@ -40,9 +40,9 @@ save_allocations_to_gsheet(allocations)
 
 allocations.to_excel("data/allocations.xlsx", index=False)
 
-    st.subheader("Результат")
+st.subheader("Результат")
 
-    st.dataframe(allocations)
+st.dataframe(allocations)
 
     allocations.to_excel(
         "data/allocations.xlsx",
