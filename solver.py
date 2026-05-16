@@ -67,21 +67,34 @@ def solve(guests_df, rooms_df):
 
     model.Minimize(sum(objective_terms))
 
-    solver = cp_model.CpSolver()
-    solver.parameters.max_time_in_seconds = 10
+solver = cp_model.CpSolver()
 
-    status = solver.Solve(model)
+solver.parameters.max_time_in_seconds = 10
 
-    print("SOLVER STATUS:", status)
+status = solver.Solve(model)
 
-    result = []
+from ortools.sat.python.cp_model import OPTIMAL, FEASIBLE
 
-    for g in range(len(guests)):
-        for r in range(len(rooms)):
-            if solver.Value(x[g, r]):
-                result.append({
-                    "fio": guests[g]["fio"],
-                    "room": rooms[r]["room_id"]
-                })
+if status not in [OPTIMAL, FEASIBLE]:
 
-    return pd.DataFrame(result)
+    return pd.DataFrame([
+        {
+            "error": f"No solution found. Status={status}"
+        }
+    ])
+
+result = []
+
+for g in range(len(guests)):
+    for r in range(len(rooms)):
+
+        if solver.Value(x[g, r]):
+
+            result.append({
+                "fio": guests[g]["fio"],
+                "room": rooms[r]["room_id"]
+            })
+
+return pd.DataFrame(result)
+
+   
