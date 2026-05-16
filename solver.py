@@ -1,27 +1,25 @@
 from ortools.sat.python import cp_model
 import pandas as pd
 from config import WEIGHTS
-import pandas as pd
 
 
+# =========================================================
+# NORMALIZATION
+# =========================================================
 def normalize_records(data):
 
     if data is None:
         return []
 
-    # DataFrame → list[dict]
     if isinstance(data, pd.DataFrame):
         return data.to_dict("records")
 
-    # already correct
     if isinstance(data, list):
         return data
 
-    # single dict
     if isinstance(data, dict):
         return [data]
 
-    # pandas Series
     if hasattr(data, "to_dict"):
         try:
             return data.to_dict("records")
@@ -29,7 +27,12 @@ def normalize_records(data):
             return [data.to_dict()]
 
     raise TypeError(f"Unsupported data type: {type(data)}")
+
+
 def clean_rooms(rooms_df):
+
+    rooms_df = normalize_records(rooms_df)
+
     cleaned = []
 
     for r in rooms_df:
@@ -42,16 +45,16 @@ def clean_rooms(rooms_df):
         })
 
     return cleaned
-def norm_col(c):
-    return str(c).strip().lower()
+
+
 # =========================================================
-# COST
+# COST FUNCTION
 # =========================================================
 def conflict_cost(a, b):
 
     cost = 0
 
-    if a["gender"] != b["gender"]:
+    if a.get("gender") != b.get("gender"):
         cost += WEIGHTS["gender_conflict"]
 
     if a.get("city") != b.get("city"):
@@ -70,34 +73,44 @@ def solve(guests_df, rooms_df):
 
     model = cp_model.CpModel()
 
-    # ❗ теперь уже ДАННЫЕ приходят как list[dict]
-    guests = guests_df
+    # -------------------------
+    # NORMALIZE INPUTS (ВАЖНО)
+    # -------------------------
+    guests = normalize_records(guests_df)
     rooms = clean_rooms(rooms_df)
-    capacity = rooms[r]["capacity"]
 
     G = range(len(guests))
     R = range(len(rooms))
 
+    # -------------------------
+    # VARIABLES
+    # -------------------------
     x = {}
 
     for g in G:
         for r in R:
             x[g, r] = model.NewBoolVar(f"x_{g}_{r}")
 
-    # one room per guest
+    # -------------------------
+    # 1. each guest → 1 room
+    # -------------------------
     for g in G:
         model.Add(sum(x[g, r] for r in R) == 1)
 
-    # capacity
+    # -------------------------
+    # 2. capacity constraint
+    # -------------------------
     for r in R:
         model.Add(
             sum(x[g, r] for g in G)
-            <= int(rooms[r]["вместимость"])
+            <= rooms[r]["capacity"]
         )
 
+    # -------------------------
+    # OBJECTIVE
+    # -------------------------
     objective = []
 
-    # conflicts
     for g1 in G:
         for g2 in range(g1 + 1, len(guests)):
 
@@ -118,25 +131,33 @@ def solve(guests_df, rooms_df):
 
     model.Minimize(sum(objective))
 
+    # -------------------------
+    # SOLVE
+    # -------------------------
     solver = cp_model.CpSolver()
     solver.parameters.max_time_in_seconds = 10
 
     status = solver.Solve(model)
-    if isinstance(rooms_df, pd.DataFrame):
-        rooms_df = rooms_df.to_dict("records")
 
     if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
         return pd.DataFrame([{"error": "no solution"}])
 
+    # -------------------------
+    # RESULT
+    # -------------------------
     result = []
 
     for g in G:
         for r in R:
+
             if solver.Value(x[g, r]):
+
                 result.append({
                     "fio": guests[g]["fio"],
-                    "room_id": rooms[r]["room_id"]
+                    "room_id": rooms[r]["room_id"],
+                    "building": rooms[r].get("building"),
+                    "room_number": rooms[r].get("number"),
+                    "floor": rooms[r].get("floor")
                 })
 
     return pd.DataFrame(result)
-   
