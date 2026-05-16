@@ -44,8 +44,14 @@ def allocate_rooms(guests_df, rooms_df):
     # -------------------------
     for g in guests_df:
 
-        start = int(g.get("checkin"))
-        end = int(g.get("checkout"))
+        start = g.get("checkin")
+        end = g.get("checkout")
+
+# convert pandas Timestamp → int day
+        if hasattr(start, "day"):
+            start = start.day
+        if hasattr(end, "day"):
+            end = end.day
 
         placed = False
 
