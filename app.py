@@ -38,3 +38,12 @@ if st.button("🚀 Расселить"):
     save_results(SHEET_ID, "Result", result)
 
     st.success("Готово")
+    st.subheader("🧠 Debug system")
+
+    st.json(debug)
+
+    st.subheader("⚠️ Невозможные группы")
+    st.write(debug["impossible_groups"])
+
+    st.subheader("❌ Причины незаселения")
+    st.write(debug["unplaced_reasons"])
