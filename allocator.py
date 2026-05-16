@@ -1,202 +1,102 @@
 import pandas as pd
-def build_room_stats(allocations_df, rooms_df):
-
-    stats = []
-
-    # считаем кто где живёт
-    grouped = allocations_df[allocations_df["room"] != "NO ROOM"].groupby("room")
-
-    for _, room in rooms_df.iterrows():
-
-        room_id = room["room_id"]
-        capacity = int(room["вместимость"])
-
-        if room_id in grouped.groups:
-            residents = grouped.get_group(room_id)
-            count = len(residents)
-        else:
-            count = 0
-
-        stats.append({
-            "room_id": room_id,
-            "capacity": capacity,
-            "occupied": count,
-            "free_places": capacity - count,
-            "fill_rate": round(count / capacity, 2) if capacity else 0
-        })
-
-    return pd.DataFrame(stats)
-
-# =========================
-# EXPLANATION ENGINE
-# =========================
-def explain_rejection(guest, room_state, room_capacity):
-
-    reasons = []
-
-    if len(room_state["guests"]) >= room_capacity:
-        reasons.append("нет свободных мест")
-
-    if room_state["has_professor"] and guest.get("status") == "student":
-        reasons.append("в комнате уже есть профессор")
-
-    if guest.get("status") == "professor" and len(room_state["guests"]) > 0:
-        reasons.append("профессор должен жить один")
-
-    city = guest.get("city")
-    if city and room_state["cities"] and city not in room_state["cities"]:
-        reasons.append("конфликт городов")
-
-    if room_state["gender"] and room_state["gender"] != guest.get("gender"):
-        reasons.append("конфликт пола")
-
-    return reasons if reasons else ["нет подходящих условий"]
+from collections import defaultdict
 
 
-# =========================
-# MAIN ALLOCATOR
-# =========================
 def allocate_rooms(guests_df, rooms_df):
 
-    # 🔥 FIX TYPES (Streamlit safe)
-    guests_df = list(guests_df)
-    rooms_df = list(rooms_df)
-
     allocations = []
-    rejections = []
+    reasons = []
 
-    # rooms init
-    rooms = [
-        {
-            "room_id": r["room_id"],
-            "capacity": int(r["вместимость"])
+    # -------------------------
+    # rooms
+    # -------------------------
+    rooms = {}
+    for _, r in rooms_df.iterrows():
+        rooms[r["room_id"]] = {
+            "capacity": int(r["вместимость"]),
+            "calendar": defaultdict(list),  # day -> guests
         }
-        for r in rooms_df
-    ]
 
-    room_state = {
-        r["room_id"]: {
-            "guests": [],
-            "cities": set(),
-            "families": set(),
-            "has_professor": False,
-            "gender": None
-        }
-        for r in rooms
-    }
-
-    # sorting priority
+    # -------------------------
+    # sort by priority
+    # -------------------------
     guests_df = sorted(
         guests_df,
         key=lambda g: (
-            g.get("status", "student") != "professor",
+            g.get("status") != "professor",
             -(g.get("age") or 0)
         )
     )
 
-    # =========================
-    # MAIN LOOP
-    # =========================
-    for guest in guests_df:
+    # -------------------------
+    # helper: room is free for full interval
+    # -------------------------
+    def is_free(room, start, end):
+        cal = room["calendar"]
 
-        best_room = None
-        best_score = float("-inf")
+        for d in range(start, end + 1):
+            if len(cal[d]) >= room["capacity"]:
+                return False
+        return True
 
-        for room in rooms:
+    def add_guest(room, guest, start, end):
+        for d in range(start, end + 1):
+            room["calendar"][d].append(guest)
 
-            state = room_state[room["room_id"]]
+    # -------------------------
+    # main loop
+    # -------------------------
+    for g in guests_df:
 
-            # HARD CHECKS (fast skip)
-            if len(state["guests"]) >= room["capacity"]:
-                continue
+        start = int(g.get("checkin"))
+        end = int(g.get("checkout"))
 
-            score = 0
+        placed = False
+        reason = None
 
-            # soft logic
-            if state["has_professor"] and guest.get("status") == "student":
-                score -= 1000
+        for room_id, room in rooms.items():
 
-            if state["cities"] and guest.get("city") not in state["cities"]:
-                score -= 50
+            if is_free(room, start, end):
 
-            if state["gender"] and state["gender"] != guest.get("gender"):
-                score -= 20
+                add_guest(room, g, start, end)
 
-            if score > best_score:
-                best_score = score
-                best_room = room["room_id"]
+                allocations.append({
+                    "fio": g["fio"],
+                    "room": room_id,
+                    "checkin": start,
+                    "checkout": end
+                })
 
-        # =========================
-        # ASSIGN OR REJECT
-        # =========================
-        if best_room is None:
-            # explanation fallback
-            fallback_room = rooms[0] if rooms else None
+                placed = True
+                break
 
-            reasons = ["нет доступной комнаты"]
-
-            if fallback_room:
-                reasons = explain_rejection(
-                    guest,
-                    room_state[fallback_room["room_id"]],
-                    fallback_room["capacity"]
-                )
-
-            rejections.append({
-                "fio": guest.get("fio", ""),
-                "age": guest.get("age"),
-                "city": guest.get("city"),
-                "status": guest.get("status"),
-                "reasons": reasons
-            })
-
+        if not placed:
             allocations.append({
-                "fio": guest.get("fio", ""),
-                "room": "NO ROOM"
+                "fio": g["fio"],
+                "room": "NO ROOM",
+                "checkin": start,
+                "checkout": end
             })
 
-            continue
+            reasons.append({
+                "fio": g["fio"],
+                "reason": "нет свободной комнаты в даты проживания"
+            })
 
-        # update state
-        state = room_state[best_room]
+    return pd.DataFrame(allocations), pd.DataFrame(reasons)
+    def build_room_stats(rooms):
+    result = []
 
-        state["guests"].append(guest)
-        state["cities"].add(guest.get("city"))
-        state["gender"] = guest.get("gender")
+    for room_id, room in rooms.items():
+        total_people = set()
 
-        if guest.get("status") == "professor":
-            state["has_professor"] = True
+        for day, guests in room["calendar"].items():
+            for g in guests:
+                total_people.add(g["fio"])
 
-        allocations.append({
-            "fio": guest.get("fio", ""),
-            "room": best_room
-        })
-
-    return pd.DataFrame(allocations), pd.DataFrame(rejections)
-
-
-def build_room_stats(allocations_df, rooms_df):
-
-    stats = []
-
-    grouped = allocations_df[allocations_df["room"] != "NO ROOM"].groupby("room")
-
-    for _, room in rooms_df.iterrows():
-
-        room_id = room["room_id"]
-        capacity = int(room["вместимость"])
-
-        if room_id in grouped.groups:
-            count = len(grouped.get_group(room_id))
-        else:
-            count = 0
-
-        stats.append({
+        result.append({
             "room_id": room_id,
-            "capacity": capacity,
-            "occupied": count,
-            "free_places": capacity - count,
-            "fill_rate": round(count / capacity, 2) if capacity else 0
+            "people_count": len(total_people)
         })
 
-    return pd.DataFrame(stats)
+    return pd.DataFrame(result)
