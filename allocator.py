@@ -1,6 +1,15 @@
 import pandas as pd
 from collections import defaultdict
+def allocate_rooms(guests_df, rooms_df):
 
+    # =========================
+    # FIX INPUT TYPES (CRITICAL)
+    # =========================
+    if isinstance(guests_df, pd.DataFrame):
+        guests_df = guests_df.to_dict("records")
+
+    if isinstance(rooms_df, pd.DataFrame):
+        rooms_df = rooms_df.to_dict("records")
 
 def age_distance(a, b):
     if a is None or b is None:
