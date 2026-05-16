@@ -4,110 +4,72 @@ import pandas as pd
 def allocate_rooms(guests_df, rooms_df):
 
     allocations = []
-
     occupancy = {}
 
     # =========================
-    # INIT ROOMS
+    # INIT
     # =========================
     for _, room in rooms_df.iterrows():
 
         occupancy[room["room_id"]] = {
             "capacity": room["вместимость"],
             "guests": [],
-            "gender": None,
-            "cities": set(),
-            "families": set(),
-            "has_professor": False
+            "genders": set(),
+            "ages": [],
+            "cities": set()
         }
 
     # =========================
-    # SORT PRIORITY
-    # professors first → older → families grouped
+    # SORT (VERY IMPORTANT)
     # =========================
     guests_df = guests_df.sort_values(
-        by=["status", "age"],
-        ascending=[False, False],
-        na_position="last"
+        by=["age"],
+        ascending=False
     )
 
     # =========================
     # MAIN LOOP
     # =========================
-    for _, guest in guests_df.iterrows():
+    for _, g in guests_df.iterrows():
 
-        fio = guest["fio"]
-        gender = guest.get("gender")
-        age = guest.get("age", 0)
-        city = guest.get("city", "UNKNOWN")
-        status = guest.get("status", "student")
-        family = guest.get("family_id")
+        fio = g["fio"]
+        gender = g["gender"]
+        age = g["age"]
+        city = g.get("city", "UNKNOWN")
 
         allocated = False
 
         for room_id, room in occupancy.items():
 
-            current = room["guests"]
-
             # -------------------------
-            # 1. CAPACITY
+            # CAPACITY
             # -------------------------
-            if len(current) >= room["capacity"]:
+            if len(room["guests"]) >= room["capacity"]:
                 continue
 
             # -------------------------
-            # 2. PROFESSOR RULE
+            # GENDER RULE (soft)
             # -------------------------
-            if status == "professor":
+            if len(room["genders"]) > 1:
+                continue
 
-                # only empty or same professor room
-                if len(current) > 0 and not room["has_professor"]:
-                    continue
-
-            else:
-                # students cannot go into professor-only room
-                if room["has_professor"]:
-                    continue
+            if room["genders"] and gender not in room["genders"]:
+                continue
 
             # -------------------------
-            # 3. FAMILY RULE (STRICT)
+            # CITY RULE (disabled if UNKNOWN)
             # -------------------------
-            if family:
-
-                # if room already has different family → skip
-                if room["families"] and family not in room["families"]:
-                    continue
-
-            # -------------------------
-            # 4. CITY RULE (SOFT)
-            # -------------------------
-            if city != "UNKNOWN":
-
-                # allow mixing ONLY if empty or same city
-                if room["cities"] and city not in room["cities"]:
+            if city != "UNKNOWN" and room["cities"]:
+                if city not in room["cities"]:
                     continue
 
             # -------------------------
             # ASSIGN
             # -------------------------
-            current.append({
-                "fio": fio,
-                "gender": gender,
-                "age": age,
-                "city": city,
-                "status": status,
-                "family_id": family
-            })
-
+            room["guests"].append(fio)
+            room["genders"].add(gender)
             room["cities"].add(city)
-
-            if family:
-                room["families"].add(family)
-
-            if status == "professor":
-                room["has_professor"] = True
-
-            room["gender"] = gender
+            room["ages"].append(age)
 
             allocations.append({
                 "fio": fio,
