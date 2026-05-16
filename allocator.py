@@ -3,13 +3,26 @@ from collections import defaultdict
 def allocate_rooms(guests_df, rooms_df):
 
     # =========================
-    # FIX INPUT TYPES (CRITICAL)
+    # NORMALIZE INPUT
     # =========================
     if isinstance(guests_df, pd.DataFrame):
         guests_df = guests_df.to_dict("records")
 
     if isinstance(rooms_df, pd.DataFrame):
         rooms_df = rooms_df.to_dict("records")
+
+    allocations = []
+
+    # =========================
+    # SAFE SORT
+    # =========================
+    guests_df = sorted(
+        guests_df,
+        key=lambda g: (
+            g.get("status") != "professor",
+            -(g.get("age") or 0)
+        )
+    )
 
 def age_distance(a, b):
     if a is None or b is None:
