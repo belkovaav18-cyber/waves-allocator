@@ -31,10 +31,12 @@ st.dataframe(guests)
 
 if st.button("Авторасселение"):
 
-    allocations = allocate_rooms(
-        guests,
-        rooms
-    )
+    allocations = allocate_rooms(guests, rooms)
+
+st.subheader("Результат")
+st.dataframe(allocations)
+
+allocations.to_excel("data/allocations.xlsx", index=False)
 
     st.subheader("Результат")
 
