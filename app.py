@@ -40,11 +40,11 @@ final_result = pd.concat([
     non_residents_result[["fio", "room_id"]]
 ])
 
-    st.subheader("Result")
-    st.dataframe(result)
+st.subheader("Result")
+st.dataframe(result)
 
-    st.subheader("Debug")
-    st.json(debug)
+st.subheader("Debug")
+st.json(debug)
 
     save_results(SHEET_ID, "Result", result)
     st.success("Готово")
