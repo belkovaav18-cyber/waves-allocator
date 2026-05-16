@@ -3,10 +3,11 @@ import re
 
 
 # =========================================================
-# NORMALIZE
+# NORMALIZE COLUMNS
 # =========================================================
 def normalize_columns(df):
     df = df.copy()
+
     df.columns = (
         df.columns
         .astype(str)
@@ -14,6 +15,7 @@ def normalize_columns(df):
         .str.replace("\ufeff", "", regex=False)
         .str.strip()
     )
+
     return df
 
 
@@ -70,23 +72,57 @@ def extract_nights(row):
 
 
 # =========================================================
-# COMMENT PARSER (RULE BASED)
+# NAME MATCHING HELPERS (КЛЮЧЕВАЯ ЧАСТЬ)
+# =========================================================
+def normalize_surname(fio):
+    """
+    Делает фамилию устойчивой к падежам:
+    Черновым -> чернов
+    Ивановой -> иванов
+    """
+    s = fio.lower().split()[0]
+    s = re.sub(r"(ым|ом|ой|ая|ую|ю|е|а|я|у|и|ы)$", "", s)
+    return s
+
+
+def match_fio(text, fio):
+    """
+    fuzzy matching без библиотек
+    """
+    text = text.lower()
+
+    surname = normalize_surname(fio)
+
+    # прямое вхождение
+    if surname in text:
+        return True
+
+    # частичное совпадение (на случай сокращений)
+    if len(surname) >= 4 and surname[:4] in text:
+        return True
+
+    return False
+
+
+# =========================================================
+# COMMENT PARSER
 # =========================================================
 def parse_comment(comment, fio_list):
 
     text = str(comment).lower()
 
-    hard, soft, avoid = [], [], []
+    hard = []
+    soft = []
+    avoid = []
 
     # -------------------------
-    # HARD GROUP (FIO match)
+    # HARD GROUP
     # -------------------------
     for fio in fio_list:
         if not fio:
             continue
 
-        surname = fio.lower().split()[0]
-        if surname in text:
+        if match_fio(text, fio):
             hard.append(fio)
 
     # -------------------------
@@ -110,7 +146,7 @@ def parse_comment(comment, fio_list):
 
 
 # =========================================================
-# MAIN
+# MAIN PIPELINE
 # =========================================================
 def preprocess_guests(df):
 
@@ -118,31 +154,42 @@ def preprocess_guests(df):
 
     processed = pd.DataFrame()
 
+    # -------------------------
+    # BASIC
+    # -------------------------
     processed["fio"] = df.get("ФИО", "")
 
+    # -------------------------
     # RESIDENT
+    # -------------------------
     processed["resident"] = df.get(
         "Выбор тарифа за проживание", ""
     ).apply(parse_resident)
 
+    # -------------------------
     # META
+    # -------------------------
     processed["gender"] = processed["fio"].apply(detect_gender)
 
     processed["city"] = df.get("Город", "UNKNOWN")
     processed["status"] = df.get("Статус", "student")
 
+    # -------------------------
     # NIGHTS
+    # -------------------------
     processed["nights"] = df.apply(extract_nights, axis=1)
 
-    # FIX: safe assignment (IMPORTANT)
+    # нерезиденты не живут
     mask = ~processed["resident"]
     processed.loc[mask, "nights"] = pd.Series(
         [[] for _ in range(mask.sum())],
         index=processed[mask].index
     )
 
-    # COMMENTS
-    fio_list = processed["fio"].tolist()
+    # -------------------------
+    # COMMENTS ENGINE
+    # -------------------------
+    fio_list = processed["fio"].fillna("").tolist()
 
     if "Комментарий" in df.columns:
         comments = df["Комментарий"].fillna("")
