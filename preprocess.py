@@ -16,40 +16,21 @@ def normalize_columns(df):
         .str.replace("\n", " ", regex=False)
         .str.replace("\ufeff", "", regex=False)
         .str.strip()
-        .str.lower()
     )
 
     return df
 
 
 # =========================================================
-# TEXT NORMALIZATION
+# HELPERS
 # =========================================================
-def normalize(text):
+def norm(x):
 
-    text = str(text).lower().strip()
-
-    text = text.replace("ё", "е")
-
-    text = re.sub(r"[^\w\s]", " ", text)
-    text = re.sub(r"\s+", " ", text)
-
-    return text.strip()
-
-
-# =========================================================
-# FIO NORMALIZATION
-# =========================================================
-def normalize_fio(fio):
-
-    fio = normalize(fio)
-
-    parts = fio.split()
-
-    if len(parts) == 0:
-        return ""
-
-    return " ".join(parts)
+    return re.sub(
+        r"\s+",
+        " ",
+        str(x).strip().lower()
+    )
 
 
 # =========================================================
@@ -57,22 +38,16 @@ def normalize_fio(fio):
 # =========================================================
 def detect_gender(fio):
 
-    fio = str(fio).strip()
+    parts = str(fio).split()
 
-    if not fio:
+    if not parts:
         return "M"
 
-    parts = fio.split()
-
-    if len(parts) < 2:
-        return "M"
-
-    name = parts[1].lower()
-
-    if name.endswith(("а", "я")):
-        return "F"
-
-    return "M"
+    return (
+        "F"
+        if parts[0].lower().endswith(("а", "я"))
+        else "M"
+    )
 
 
 # =========================================================
@@ -83,25 +58,19 @@ def parse_resident(v):
     if pd.isna(v):
         return True
 
-    v = normalize(v)
+    v = str(v).lower()
 
-    stop_words = [
-        "не буду",
-        "не прожива",
-        "не планир",
-        "без проживания",
-        "отказ"
-    ]
-
-    for w in stop_words:
-        if w in v:
-            return False
+    if (
+        "не буду" in v
+        or "не прожива" in v
+    ):
+        return False
 
     return True
 
 
 # =========================================================
-# NIGHTS EXTRACTION
+# NIGHTS
 # =========================================================
 def extract_nights(row):
 
@@ -109,24 +78,23 @@ def extract_nights(row):
 
     for col in row.index:
 
-        col_str = normalize(col)
-
+        col_str = str(col).lower()
         val = row[col]
 
         if pd.isna(val):
             continue
 
-        val = normalize(val)
+        val = str(val).strip().lower()
 
-        # только колонки ночей
-        if "ноч" not in col_str and "комнат" not in col_str:
+        if (
+            "ноч" not in col_str
+            and "комнат" not in col_str
+        ):
             continue
 
-        # пустые значения
         if val in ["", "нет", "0", "-", "false"]:
             continue
 
-        # ищем номер ночи
         match = re.search(r"(\d+)", col_str)
 
         if match:
@@ -136,95 +104,200 @@ def extract_nights(row):
 
 
 # =========================================================
-# ROOM TYPE DETECTION
+# SHORT NAME BUILDER
 # =========================================================
-def detect_room_type(text):
+def short_versions(fio):
 
-    text = normalize(text)
+    fio = norm(fio)
 
-    if any(x in text for x in [
-        "одномест",
-        "1 мест",
-        "без подсел"
-    ]):
-        return 1
+    parts = fio.split()
 
-    if any(x in text for x in [
-        "двухмест",
-        "двух мест",
-        "2 мест",
-        "двух-мест"
-    ]):
-        return 2
+    if len(parts) < 2:
+        return []
 
-    if any(x in text for x in [
-        "трехмест",
-        "трех мест",
-        "3 мест",
-        "трёхмест"
-    ]):
-        return 3
+    surname = parts[0]
 
-    return None
+    initials = ""
+
+    for p in parts[1:]:
+        initials += p[0]
+
+    variants = [
+        fio,
+        surname,
+        f"{surname} {initials}",
+    ]
+
+    if len(initials) >= 2:
+        variants.append(
+            f"{surname} {initials[0]}.{initials[1]}."
+        )
+
+        variants.append(
+            f"{surname} {initials[0]}.{initials[1]}"
+        )
+
+    return variants
+
+
+# =========================================================
+# FIND PEOPLE IN COMMENT
+# =========================================================
+def extract_people(comment, fio_list):
+
+    text = norm(comment)
+
+    found = []
+
+    for fio in fio_list:
+
+        variants = short_versions(fio)
+
+        for v in variants:
+
+            if len(v) < 4:
+                continue
+
+            if v in text:
+                found.append(fio)
+                break
+
+            score = fuzz.partial_ratio(v, text)
+
+            if score >= 90:
+                found.append(fio)
+                break
+
+    return list(set(found))
 
 
 # =========================================================
 # COMMENT PARSER
 # =========================================================
-def parse_comment(comment, fio_list, current_fio=None):
+def parse_comment(comment, fio_list):
 
-    text = normalize(comment)
+    text = norm(comment)
 
     hard = []
     soft = []
     avoid = []
 
-    # -----------------------------------------
-    # fuzzy fio matching
-    # -----------------------------------------
-    for fio in fio_list:
+    allocation_variants = []
 
-        fio_norm = normalize_fio(fio)
+    room_type = None
 
-        if not fio_norm:
-            continue
+    # =====================================================
+    # ROOM TYPE
+    # =====================================================
 
-        score = fuzz.partial_ratio(fio_norm, text)
+    if (
+        "одномест" in text
+        or "без подсел" in text
+    ):
+        room_type = 1
 
-        # DEBUG threshold
-        if score >= 80:
+    elif (
+        "двухмест" in text
+        or "двух-мест" in text
+        or "двуспаль" in text
+    ):
+        room_type = 2
 
-            if current_fio is not None:
+    elif (
+        "трехмест" in text
+        or "трёхмест" in text
+    ):
+        room_type = 3
 
-                # не добавляем самого себя
-                if normalize_fio(current_fio) == fio_norm:
-                    continue
+    # =====================================================
+    # PEOPLE
+    # =====================================================
 
-            hard.append(fio)
+    found_people = extract_people(
+        text,
+        fio_list
+    )
 
-    hard = list(set(hard))
+    # =====================================================
+    # TOGETHER WORDS
+    # =====================================================
 
-    # -----------------------------------------
-    # room type
-    # -----------------------------------------
-    room_type = detect_room_type(text)
+    together_words = [
+        "вместе",
+        "совместно",
+        "поселить с",
+        "проживание с",
+        "заселить с",
+        "с подселением",
+        "с женой",
+        "с мужем",
+        "с супруг",
+    ]
 
-    # -----------------------------------------
-    # avoid logic
-    # -----------------------------------------
-    if any(x in text for x in [
-        "не вместе",
+    if any(w in text for w in together_words):
+        hard.extend(found_people)
+
+    # =====================================================
+    # SOFT WORDS
+    # =====================================================
+
+    soft_words = [
+        "желательно",
+        "если возможно",
+        "по возможности",
+        "хотелось бы"
+    ]
+
+    if any(w in text for w in soft_words):
+        soft.extend(found_people)
+
+    # =====================================================
+    # AVOID
+    # =====================================================
+
+    avoid_words = [
         "не селить",
-        "не подсел"
-    ]):
-        avoid = hard.copy()
-        hard = []
+        "не вместе",
+        "не хочу"
+    ]
+
+    if any(w in text for w in avoid_words):
+        avoid.extend(found_people)
+
+    # =====================================================
+    # PRIORITY VARIANTS
+    # =====================================================
+
+    if (
+        "если" in text
+        and "3" in text
+        and len(found_people) >= 2
+    ):
+
+        allocation_variants.append({
+            "room_type": 3,
+            "group": found_people,
+            "priority": 1
+        })
+
+    if (
+        "если" in text
+        and "2" in text
+        and len(found_people) >= 1
+    ):
+
+        allocation_variants.append({
+            "room_type": 2,
+            "group": [found_people[0]],
+            "priority": 2
+        })
 
     return {
-        "hard_group": hard,
-        "soft_group": soft,
-        "avoid_group": avoid,
-        "room_type": room_type
+        "hard_group": list(set(hard)),
+        "soft_group": list(set(soft)),
+        "avoid_group": list(set(avoid)),
+        "room_type": room_type,
+        "allocation_variants": allocation_variants
     }
 
 
@@ -233,132 +306,104 @@ def parse_comment(comment, fio_list, current_fio=None):
 # =========================================================
 def preprocess_guests(df):
 
-    # -----------------------------------------
-    # normalize columns
-    # -----------------------------------------
     df = normalize_columns(df)
 
     processed = pd.DataFrame()
 
-    # -----------------------------------------
-    # FIO
-    # -----------------------------------------
-    if "фио" not in df.columns:
-        raise Exception("Колонка ФИО не найдена")
+    # =====================================================
+    # BASIC
+    # =====================================================
 
-    processed["fio"] = df["фио"].astype(str)
+    processed["fio"] = df["ФИО"]
 
-    # -----------------------------------------
-    # RESIDENT
-    # -----------------------------------------
-    tariff_col = None
+    processed["resident"] = df.get(
+        "Выбор тарифа за проживание",
+        ""
+    ).apply(parse_resident)
 
-    for c in df.columns:
-        if "тариф" in c and "прож" in c:
-            tariff_col = c
-            break
-
-    if tariff_col:
-        processed["resident"] = df[tariff_col].apply(parse_resident)
-    else:
-        processed["resident"] = True
-
-    # -----------------------------------------
-    # META
-    # -----------------------------------------
-    city_col = next(
-        (c for c in df.columns if "город" in c),
-        None
+    processed["gender"] = (
+        processed["fio"]
+        .apply(detect_gender)
     )
 
-    status_col = next(
-        (c for c in df.columns if "статус" in c),
-        None
+    processed["city"] = df.get(
+        "Город",
+        "UNKNOWN"
     )
 
-    processed["city"] = (
-        df[city_col] if city_col else "unknown"
+    processed["status"] = df.get(
+        "Статус",
+        "student"
     )
 
-    processed["status"] = (
-        df[status_col] if status_col else "student"
-    )
-
-    # -----------------------------------------
-    # GENDER
-    # -----------------------------------------
-    processed["gender"] = processed["fio"].apply(
-        detect_gender
-    )
-
-    # -----------------------------------------
+    # =====================================================
     # NIGHTS
-    # -----------------------------------------
+    # =====================================================
+
     processed["nights"] = df.apply(
         extract_nights,
         axis=1
     )
 
-    # -----------------------------------------
     # нерезиденты не живут
-    # -----------------------------------------
     processed["nights"] = processed.apply(
-        lambda r: [] if not r["resident"] else r["nights"],
+        lambda row:
+            []
+            if not row["resident"]
+            else row["nights"],
         axis=1
     )
 
-    # -----------------------------------------
-    # COMMENT COLUMN
-    # -----------------------------------------
-    comment_col = next(
-        (
-            c for c in df.columns
-            if "коммент" in c
-            or "пожел" in c
-        ),
-        None
-    )
+    # =====================================================
+    # COMMENTS
+    # =====================================================
 
-    if comment_col:
-        comments = df[comment_col].fillna("").astype(str)
-    else:
+    fio_list = processed["fio"].tolist()
+
+    comment_col = None
+
+    for c in df.columns:
+
+        c_norm = norm(c)
+
+        if "коммент" in c_norm:
+            comment_col = c
+            break
+
+    if comment_col is None:
         comments = pd.Series(
             [""] * len(processed)
         )
+    else:
+        comments = df[comment_col].fillna("")
 
-    # -----------------------------------------
-    # COMMENT PARSING
-    # -----------------------------------------
-    fio_list = processed["fio"].tolist()
-
-    parsed = []
-
-    for i in range(len(processed)):
-
-        current_fio = processed.iloc[i]["fio"]
-
-        p = parse_comment(
-            comments.iloc[i],
-            fio_list,
-            current_fio=current_fio
-        )
-
-        parsed.append(p)
+    parsed = comments.apply(
+        lambda c: parse_comment(c, fio_list)
+    )
 
     processed["group_hard"] = [
-        p["hard_group"] for p in parsed
+        x["hard_group"]
+        for x in parsed
     ]
 
     processed["group_soft"] = [
-        p["soft_group"] for p in parsed
+        x["soft_group"]
+        for x in parsed
     ]
 
     processed["group_avoid"] = [
-        p["avoid_group"] for p in parsed
+        x["avoid_group"]
+        for x in parsed
     ]
 
     processed["room_type"] = [
-        p["room_type"] for p in parsed
+        x["room_type"]
+        for x in parsed
+    ]
+
+    processed["allocation_variants"] = [
+        x["allocation_variants"]
+        for x in parsed
     ]
 
     return processed
