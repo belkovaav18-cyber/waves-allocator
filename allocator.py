@@ -1,5 +1,31 @@
 import pandas as pd
+def build_room_stats(allocations_df, rooms_df):
 
+    stats = []
+
+    # считаем кто где живёт
+    grouped = allocations_df[allocations_df["room"] != "NO ROOM"].groupby("room")
+
+    for _, room in rooms_df.iterrows():
+
+        room_id = room["room_id"]
+        capacity = int(room["вместимость"])
+
+        if room_id in grouped.groups:
+            residents = grouped.get_group(room_id)
+            count = len(residents)
+        else:
+            count = 0
+
+        stats.append({
+            "room_id": room_id,
+            "capacity": capacity,
+            "occupied": count,
+            "free_places": capacity - count,
+            "fill_rate": round(count / capacity, 2) if capacity else 0
+        })
+
+    return pd.DataFrame(stats)
 
 # =========================
 # EXPLANATION ENGINE
