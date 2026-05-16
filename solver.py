@@ -22,7 +22,7 @@ def conflict_cost(a, b):
 
 
 # =========================================================
-# SAFE GET ROOM CAP
+# SAFE CAPACITY
 # =========================================================
 def get_capacity(room):
     try:
@@ -42,9 +42,6 @@ def solve(guests, rooms):
     residents = [g for g in guests if g.get("resident", True)]
     non_residents = [g for g in guests if not g.get("resident", True)]
 
-    # =====================================================
-    # EDGE CASE
-    # =====================================================
     if len(residents) == 0:
         return pd.DataFrame([{
             "fio": g["fio"],
@@ -61,29 +58,25 @@ def solve(guests, rooms):
     # VARIABLES
     # =====================================================
     x = {}
-
     for g in G:
         for r in R:
             x[g, r] = model.NewBoolVar(f"x_{g}_{r}")
 
     # =====================================================
-    # each guest -> one room
+    # HARD CONSTRAINTS
     # =====================================================
+
+    # one room per guest
     for g in G:
         model.Add(sum(x[g, r] for r in R) == 1)
 
-    # =====================================================
-    # capacity constraint
-    # =====================================================
+    # capacity
     for r in R:
         cap = get_capacity(rooms[r])
-
-        model.Add(
-            sum(x[g, r] for g in G) <= cap
-        )
+        model.Add(sum(x[g, r] for g in G) <= cap)
 
     # =====================================================
-    # ROOM TYPE CONSTRAINT (NEW)
+    # ROOM TYPE CONSTRAINT
     # =====================================================
     for g in G:
 
@@ -98,16 +91,17 @@ def solve(guests, rooms):
             continue
 
         for r in R:
-            cap = get_capacity(rooms[r])
-
-            if cap != req:
+            if get_capacity(rooms[r]) != req:
                 model.Add(x[g, r] == 0)
 
     # =====================================================
-    # OBJECTIVE (conflicts)
+    # OBJECTIVE
     # =====================================================
     objective = []
 
+    # -------------------------
+    # HARD CONFLICT COSTS
+    # -------------------------
     for g1 in G:
         for g2 in range(g1 + 1, len(residents)):
 
@@ -118,13 +112,66 @@ def solve(guests, rooms):
 
             for r in R:
 
-                p = model.NewBoolVar(f"p_{g1}_{g2}_{r}")
+                p = model.NewBoolVar(f"pair_{g1}_{g2}_{r}")
 
                 model.Add(p <= x[g1, r])
                 model.Add(p <= x[g2, r])
                 model.Add(p >= x[g1, r] + x[g2, r] - 1)
 
                 objective.append(cost * p)
+
+    # =====================================================
+    # SOFT BONUS
+    # =====================================================
+    for g in G:
+
+        for other in residents[g].get("group_soft", []) or []:
+
+            # ищем индекс другого гостя
+            other_idx = None
+            for i in G:
+                if residents[i]["fio"] == other:
+                    other_idx = i
+                    break
+
+            if other_idx is None or g >= other_idx:
+                continue
+
+            for r in R:
+
+                t = model.NewBoolVar(f"soft_{g}_{other_idx}_{r}")
+
+                model.Add(t <= x[g, r])
+                model.Add(t <= x[other_idx, r])
+                model.Add(t >= x[g, r] + x[other_idx, r] - 1)
+
+                objective.append(-30 * t)
+
+    # =====================================================
+    # AVOID PENALTY
+    # =====================================================
+    for g in G:
+
+        for other in residents[g].get("group_avoid", []) or []:
+
+            other_idx = None
+            for i in G:
+                if residents[i]["fio"] == other:
+                    other_idx = i
+                    break
+
+            if other_idx is None:
+                continue
+
+            for r in R:
+
+                t = model.NewBoolVar(f"avoid_{g}_{other_idx}_{r}")
+
+                model.Add(t <= x[g, r])
+                model.Add(t <= x[other_idx, r])
+                model.Add(t >= x[g, r] + x[other_idx, r] - 1)
+
+                objective.append(100 * t)
 
     model.Minimize(sum(objective))
 
@@ -140,7 +187,7 @@ def solve(guests, rooms):
         return pd.DataFrame([{"error": "no solution"}])
 
     # =====================================================
-    # RESULT (residents)
+    # RESULT
     # =====================================================
     result = []
 
@@ -153,7 +200,7 @@ def solve(guests, rooms):
                 })
 
     # =====================================================
-    # ADD NON-RESIDENTS
+    # NON-RESIDENTS
     # =====================================================
     for g in non_residents:
         result.append({
