@@ -2,7 +2,16 @@ import pandas as pd
 import streamlit as st
 import gspread
 from google.oauth2.service_account import Credentials
+def clean_for_gsheet(df):
 
+    df = df.copy()
+
+    for col in df.columns:
+        df[col] = df[col].apply(
+            lambda x: "" if pd.isna(x) else str(x)
+        )
+
+    return df
 
 SPREADSHEET_ID = "10cBNkDQ3fOCajBIjeAsaCPsivEfVShGZ-BHmLcC6l5s"
 SHEET_NAME = "Лист1"
