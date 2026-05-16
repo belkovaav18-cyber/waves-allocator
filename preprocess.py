@@ -171,7 +171,7 @@ def preprocess_guests(df: pd.DataFrame) -> pd.DataFrame:
     processed["nights"] = df.apply(extract_nights, axis=1)
 
     # ❗ нерезиденты не живут
-    processed.loc[processed["resident"] == False, "nights"] = [[] for _ in range(len(processed))]
+    processed.loc[~processed["resident"], "nights"] = processed.loc[~processed["resident"], "nights"].apply(lambda _: [])
 
     # -------------------------
     # COMMENT ENGINE
