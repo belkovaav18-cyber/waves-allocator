@@ -17,7 +17,7 @@ st.subheader("Комнаты")
 st.dataframe(rooms)
 
 raw = load_guests(SHEET_ID, TAB)
-guests = preprocess_guests(raw)
+guests = preprocess_guests(raw).to_dict("records")
 
 st.subheader("Гости")
 st.dataframe(guests)
