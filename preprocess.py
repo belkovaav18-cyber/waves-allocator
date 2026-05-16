@@ -1,56 +1,55 @@
 import pandas as pd
 import re
-from datetime import datetime
 
 
 # =========================================================
-# SAFE COLUMNS NORMALIZATION
+# CLEAN COLUMNS
 # =========================================================
-def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
+def normalize_columns(df):
 
     df = df.copy()
 
     df.columns = (
         df.columns
         .astype(str)
-        .str.replace("\n", " ", regex=False)   # убираем переносы строк
-        .str.replace("\ufeff", "", regex=False) # BOM
-        .str.strip()                           # пробелы
+        .str.replace("\n", " ", regex=False)
+        .str.strip()
     )
 
     return df
 
 
 # =========================================================
-# SMART COLUMN FINDER
+# EXTRACT NIGHTS FROM WIDE TABLE
 # =========================================================
-def find_col(df, keywords):
+def extract_nights(row):
 
-    """
-    ищет колонку по ключевым словам
-    """
-    for col in df.columns:
-        col_low = col.lower()
-        if all(k.lower() in col_low for k in keywords):
-            return col
-    return None
+    nights = []
+
+    for col, val in row.items():
+
+        if pd.isna(val):
+            continue
+
+        val = str(val).strip().lower()
+
+        # интересуют только отметки проживания
+        if "комната" in col.lower():
+
+            # если человек выбрал проживание
+            if val != "" and val.lower() not in ["нет", "0", "-"]:
+
+                # вытаскиваем ночь из названия колонки
+                match = re.search(r"ночь на (\d+)", col)
+
+                if match:
+                    nights.append(int(match.group(1)))
+
+    return sorted(list(set(nights)))
 
 
 # =========================================================
-# GENDER DETECT
-# =========================================================
-def detect_gender(name):
-
-    if pd.isna(name):
-        return "M"
-
-    name = str(name).strip().lower()
-
-    return "F" if name.endswith(("а", "я")) else "M"
-
-
-# =========================================================
-# GROUP PARSER (hard groups from comments)
+# GROUP PARSER
 # =========================================================
 def extract_hard_group(comment):
 
@@ -59,119 +58,58 @@ def extract_hard_group(comment):
 
     text = str(comment).lower()
 
-    # ищем все слова похожие на ФИО / фамилии
-    names = re.findall(r"[а-яё]{4,}", text, re.IGNORECASE)
+    names = re.findall(r"[а-яё]{4,}", text)
 
     stop = {
-        "прошу", "поселить", "вместе", "пожалуйста",
-        "спасибо", "меня", "моим", "соавтором", "пожалуйста"
+        "прошу", "поселить", "вместе",
+        "пожалуйста", "спасибо", "соавтором"
     }
 
-    cleaned = []
-
-    for n in names:
-        n = n.strip()
-
-        if n in stop:
-            continue
-
-        if len(n) < 4:
-            continue
-
-        cleaned.append(n.lower())
-
-    return list(set(cleaned))
+    return [
+        n for n in names
+        if n not in stop and len(n) > 3
+    ]
 
 
 # =========================================================
-# MAIN PREPROCESS
+# MAIN
 # =========================================================
 def preprocess_guests(df):
 
-    df = df.copy()
-
-    # -----------------------------
-    # 1. clean columns
-    # -----------------------------
     df = normalize_columns(df)
 
-    # -----------------------------
-    # 2. find columns safely
-    # -----------------------------
-    col_fio = find_col(df, ["фио"])
-    col_last = find_col(df, ["фам"])
-    col_first = find_col(df, ["имя"])
-    col_mid = find_col(df, ["отч"])
-    col_city = find_col(df, ["город"])
-    col_status = find_col(df, ["стат"])
-    col_comment = find_col(df, ["коммент"])
-    col_birth = find_col(df, ["рожд"])
-    col_checkin = find_col(df, ["заезд"])
-    col_checkout = find_col(df, ["отъезд"])
-    col_nights = find_col(df, ["ноч"])
-
-    # -----------------------------
-    # 3. build FIO safely
-    # -----------------------------
-    if col_fio:
-        fio = df[col_fio]
-    else:
-        last = df[col_last] if col_last else ""
-        first = df[col_first] if col_first else ""
-        mid = df[col_mid] if col_mid else ""
-
-        fio = (
-            last.fillna("") + " " +
-            first.fillna("") + " " +
-            mid.fillna("")
-        ).str.strip()
-
     processed = pd.DataFrame()
-    processed["fio"] = fio
 
     # -----------------------------
-    # 4. gender
+    # FIO
     # -----------------------------
-    if col_first:
-        processed["gender"] = df[col_first].apply(detect_gender)
-    else:
-        processed["gender"] = "M"
+    processed["fio"] = df["ФИО"]
 
     # -----------------------------
-    # 5. city / status
+    # gender
     # -----------------------------
-    processed["city"] = df[col_city] if col_city else "UNKNOWN"
-    processed["status"] = df[col_status] if col_status else "student"
+    processed["gender"] = df["ФИО"].apply(
+        lambda x: "F" if str(x).strip().split()[0].endswith(("а", "я")) else "M"
+    )
 
     # -----------------------------
-    # 6. dates
+    # status / city
     # -----------------------------
-    processed["checkin"] = pd.to_datetime(
-        df[col_checkin], errors="coerce"
-    ) if col_checkin else None
-
-    processed["checkout"] = pd.to_datetime(
-        df[col_checkout], errors="coerce"
-    ) if col_checkout else None
+    processed["city"] = df.get("Город", "UNKNOWN")
+    processed["status"] = df.get("Статус", "student")
 
     # -----------------------------
-    # 7. nights
+    # comments
     # -----------------------------
-    if col_nights:
-        processed["nights"] = pd.to_numeric(
-            df[col_nights],
-            errors="coerce"
-        ).fillna(0).astype(int)
-    else:
-        processed["nights"] = 0
+    processed["comment"] = df.get("Комментарий", "")
 
     # -----------------------------
-    # 8. comments
+    # NIGHTS (ВАЖНО)
     # -----------------------------
-    processed["comment"] = df[col_comment] if col_comment else ""
+    processed["nights"] = df.apply(extract_nights, axis=1)
 
     # -----------------------------
-    # 9. groups
+    # groups
     # -----------------------------
     processed["group_hard"] = processed["comment"].apply(extract_hard_group)
 
