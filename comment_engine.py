@@ -1,90 +1,84 @@
 import re
-from difflib import get_close_matches
 
 
-# =========================================================
-# UTIL: normalize
-# =========================================================
-def norm(text):
-    return re.sub(r"\s+", " ", str(text).lower().strip())
+def normalize(text):
+    return str(text).lower()
 
 
-# =========================================================
-# FUZZY MATCH FIO
-# =========================================================
-def match_fio(text, fio_list, cutoff=0.75):
+# -----------------------------
+# FIND PEOPLE BY FUZZY MATCH (простая версия)
+# -----------------------------
+def find_people(text, fio_list):
 
-    text = norm(text)
-    matches = []
+    text = normalize(text)
+
+    found = []
 
     for fio in fio_list:
+        parts = fio.lower().split()
 
-        fio_n = norm(fio)
-
-        # match by surname (first word)
-        surname = fio_n.split()[0]
-
-        if surname in text:
-            matches.append(fio)
+        if len(parts) < 2:
             continue
 
-        # fuzzy fallback
-        best = get_close_matches(fio_n, [text], n=1, cutoff=cutoff)
+        key = parts[0] + " " + parts[1]
 
-        if best:
-            matches.append(fio)
+        if key in text:
+            found.append(fio)
 
-    return list(set(matches))
+    return found
 
 
-# =========================================================
+# -----------------------------
+# ROOM TYPE DETECTION
+# -----------------------------
+def detect_room_type(text):
+
+    t = normalize(text)
+
+    if "одномест" in t:
+        return 1
+    if "двухмест" in t:
+        return 2
+    if "трехмест" in t or "трёхмест" in t:
+        return 3
+
+    return None
+
+
+# -----------------------------
 # MAIN PARSER
-# =========================================================
+# -----------------------------
 def parse_comment(comment, fio_list):
 
-    text = norm(comment)
+    text = normalize(comment)
 
-    result = {
-        "hard_group": [],
-        "soft_group": [],
-        "avoid_group": [],
-        "room_type": None
+    hard = []
+    soft = []
+    avoid = []
+
+    # ROOM TYPE
+    room_type = detect_room_type(text)
+
+    # ---------------- HARD SIGNALS ----------------
+    if any(x in text for x in ["посел", "размест", "совмест", "вместе"]):
+        hard += find_people(text, fio_list)
+
+    # ---------------- AVOID SIGNALS ----------------
+    if "без подсел" in text or "не с " in text:
+        avoid += find_people(text, fio_list)
+
+    # ---------------- SOFT SIGNALS ----------------
+    if "если возможно" in text or "если будут места" in text:
+        soft += find_people(text, fio_list)
+
+    # cleanup
+    hard = list(set(hard))
+    soft = list(set(soft))
+    avoid = list(set(avoid))
+
+    return {
+        "hard_group": hard,
+        "soft_group": soft,
+        "avoid_group": avoid,
+        "room_type": room_type
     }
-
-    # =====================================================
-    # ROOM TYPE RULES
-    # =====================================================
-    if "одномест" in text:
-        result["room_type"] = 1
-
-    elif "двухмест" in text or "2-мест" in text:
-        result["room_type"] = 2
-
-    elif "трёхмест" in text or "3-мест" in text:
-        result["room_type"] = 3
-
-    # =====================================================
-    # HARD GROUP
-    # =====================================================
-    if "вместе с" in text or "поселить с" in text:
-
-        matches = match_fio(comment, fio_list)
-        result["hard_group"].extend(matches)
-
-    # =====================================================
-    # SOFT GROUP
-    # =====================================================
-    if "желательно вместе" in text or "по возможности с" in text:
-
-        matches = match_fio(comment, fio_list)
-        result["soft_group"].extend(matches)
-
-    # =====================================================
-    # AVOID GROUP
-    # =====================================================
-    if "не селить с" in text or "не вместе с" in text:
-
-        matches = match_fio(comment, fio_list)
-        result["avoid_group"].extend(matches)
-
-    return result
