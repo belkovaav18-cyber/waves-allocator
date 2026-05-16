@@ -8,6 +8,8 @@ def smart_solve(guests_df, rooms_df):
 
     guests = guests_df
     rooms = rooms_df
+    non_residents = [g for g in guests if not g.get("will_stay", True)]
+    residents = [g for g in guests if g.get("will_stay", True)]
 
     debug["input_size"] = len(guests)
 
