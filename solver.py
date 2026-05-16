@@ -20,23 +20,19 @@ def conflict_cost(a, b):
 
 def solve(guests, rooms):
 
-    residents = [g for g in guests if g.get("resident", True)]
-    non_residents = [g for g in guests if not g.get("resident", True)]
-
-    if len(residents) == 0:
-        return pd.DataFrame([{
-            "fio": g["fio"],
-            "room_id": "не проживает"
-        } for g in non_residents])
-
     model = cp_model.CpModel()
 
-    G = range(len(residents))
+    G = range(len(guests))
     R = range(len(rooms))
 
-    x = {(g, r): model.NewBoolVar(f"x_{g}_{r}") for g in G for r in R}
+    x = {}
 
-    # one room
+    # decision vars
+    for g in G:
+        for r in R:
+            x[g, r] = model.NewBoolVar(f"x_{g}_{r}")
+
+    # one room per guest
     for g in G:
         model.Add(sum(x[g, r] for r in R) == 1)
 
@@ -47,56 +43,79 @@ def solve(guests, rooms):
 
     objective = []
 
-    # conflicts
-    for g1 in G:
-        for g2 in range(g1 + 1, len(residents)):
+    # =====================================================
+    # ROOM TYPE CONSTRAINT
+    # =====================================================
+    for g in G:
+        req = guests[g].get("room_type")
 
-            cost = conflict_cost(residents[g1], residents[g2])
+        if req:
+            for r in R:
+                cap = int(rooms[r]["вместимость"])
+                if cap != req:
+                    model.Add(x[g, r] == 0)
+
+    # =====================================================
+    # HARD CONFLICTS
+    # =====================================================
+    for g1 in G:
+        for g2 in range(g1 + 1, len(guests)):
+
+            cost = conflict_cost(guests[g1], guests[g2])
             if cost == 0:
                 continue
 
             for r in R:
-                t = model.NewBoolVar(f"c_{g1}_{g2}_{r}")
+                p = model.NewBoolVar(f"p_{g1}_{g2}_{r}")
 
-                model.Add(t <= x[g1, r])
-                model.Add(t <= x[g2, r])
-                model.Add(t >= x[g1, r] + x[g2, r] - 1)
+                model.Add(p <= x[g1, r])
+                model.Add(p <= x[g2, r])
+                model.Add(p >= x[g1, r] + x[g2, r] - 1)
 
-                objective.append(cost * t)
+                objective.append(cost * p)
 
-    # soft
+    # =====================================================
+    # SOFT BONUS
+    # =====================================================
     for g in G:
-        for other in residents[g].get("group_soft", []):
+        for other in guests[g].get("group_soft", []):
+
+            if other not in [x["fio"] for x in guests]:
+                continue
+
+            j = next(i for i in G if guests[i]["fio"] == other)
+
+            if g >= j:
+                continue
 
             for r in R:
-                t = model.NewBoolVar(f"s_{g}_{other}_{r}")
+                t = model.NewBoolVar(f"soft_{g}_{j}_{r}")
 
                 model.Add(t <= x[g, r])
-                model.Add(t <= x[other, r])
-                model.Add(t >= x[g, r] + x[other, r] - 1)
+                model.Add(t <= x[j, r])
+                model.Add(t >= x[g, r] + x[j, r] - 1)
 
                 objective.append(-30 * t)
 
-    # avoid
+    # =====================================================
+    # AVOID PENALTY
+    # =====================================================
     for g in G:
-        for other in residents[g].get("group_avoid", []):
+        for other in guests[g].get("group_avoid", []):
+
+            if other not in [x["fio"] for x in guests]:
+                continue
+
+            j = next(i for i in G if guests[i]["fio"] == other)
 
             for r in R:
-                t = model.NewBoolVar(f"a_{g}_{other}_{r}")
+                t = model.NewBoolVar(f"avoid_{g}_{j}_{r}")
 
                 model.Add(t <= x[g, r])
-                model.Add(t <= x[other, r])
-                model.Add(t >= x[g, r] + x[other, r] - 1)
+                model.Add(t <= x[j, r])
+                model.Add(t >= x[g, r] + x[j, r] - 1)
 
                 objective.append(100 * t)
-
-    # room type constraint
-    for g in G:
-        req = residents[g].get("room_type")
-        if req is not None:
-            for r in R:
-                if int(rooms[r]["вместимость"]) != req:
-                    model.Add(x[g, r] == 0)
 
     model.Minimize(sum(objective))
 
@@ -114,14 +133,16 @@ def solve(guests, rooms):
         for r in R:
             if solver.Value(x[g, r]):
                 result.append({
-                    "fio": residents[g]["fio"],
+                    "fio": guests[g]["fio"],
                     "room_id": rooms[r]["room_id"]
                 })
 
-    for g in non_residents:
-        result.append({
-            "fio": g["fio"],
-            "room_id": "не проживает"
-        })
+    # non-residents
+    for g in guests:
+        if not g.get("resident", True):
+            result.append({
+                "fio": g["fio"],
+                "room_id": "не проживает"
+            })
 
     return pd.DataFrame(result)
