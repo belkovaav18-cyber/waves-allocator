@@ -22,13 +22,6 @@ def normalize_columns(df):
 # =========================================================
 # HELPERS
 # =========================================================
-def norm(x):
-    return re.sub(r"\s+", " ", str(x).strip().lower())
-
-
-# =========================================================
-# GENDER
-# =========================================================
 def detect_gender(fio):
     parts = str(fio).split()
     if not parts:
@@ -45,14 +38,15 @@ def parse_resident(v):
 
     v = str(v).lower()
 
-    if "не" in v and "прож" in v:
+    # более надёжно
+    if ("не" in v and "прож" in v) or ("не буду" in v):
         return False
 
     return True
 
 
 # =========================================================
-# NIGHTS EXTRACTION
+# NIGHTS EXTRACTION (SAFE)
 # =========================================================
 def extract_nights(row):
     nights = []
@@ -90,25 +84,34 @@ def parse_comment(comment, fio_list):
     soft = []
     avoid = []
 
-    # --- simple FIO matching ---
+    # -----------------------------
+    # FIO matching (hard group)
+    # -----------------------------
     for fio in fio_list:
+        if not fio:
+            continue
+
         fio_l = fio.lower()
-        if fio_l and fio_l in text:
+
+        # более мягкий матч (по фамилии)
+        surname = fio_l.split()[0] if fio_l.split() else fio_l
+
+        if surname in text:
             hard.append(fio)
 
-    # --- room type detection ---
+    # -----------------------------
+    # ROOM TYPE detection
+    # -----------------------------
     room_type = None
 
-    if "одномест" in text:
+    if "одномест" in text or "без подсел" in text:
         room_type = 1
-    elif "двухмест" in text or "двух-мест" in text:
-        room_type = 2
-    elif "трехмест" in text or "трёхмест" in text:
-        room_type = 3
 
-    # --- special logic ---
-    if "без подсел" in text or "одномест" in text:
-        room_type = 1
+    elif "двухмест" in text or "2-мест" in text:
+        room_type = 2
+
+    elif "трехмест" in text or "трёхмест" in text or "3-мест" in text:
+        room_type = 3
 
     return {
         "hard_group": list(set(hard)),
@@ -130,7 +133,7 @@ def preprocess_guests(df):
     # -------------------------
     # BASIC FIELDS
     # -------------------------
-    processed["fio"] = df["ФИО"]
+    processed["fio"] = df.get("ФИО", "")
 
     # -------------------------
     # RESIDENT FLAG
@@ -153,14 +156,11 @@ def preprocess_guests(df):
     # -------------------------
     processed["nights"] = df.apply(extract_nights, axis=1)
 
-    # нерезиденты не живут
-    processed["nights"] = processed.apply(
-        lambda r: [] if not r["resident"] else r["nights"],
-        axis=1
-    )
+    # нерезиденты → пустые ночи
+    processed.loc[~processed["resident"], "nights"] = [[] for _ in range(len(processed))]
 
     # -------------------------
-    # COMMENT ENGINE (SAFE)
+    # COMMENTS SAFE
     # -------------------------
     fio_list = processed["fio"].tolist()
 
@@ -169,13 +169,11 @@ def preprocess_guests(df):
     else:
         comment_series = pd.Series([""] * len(processed))
 
-    parsed = comment_series.apply(
-        lambda c: parse_comment(c, fio_list)
-    )
+    parsed = comment_series.apply(lambda c: parse_comment(c, fio_list))
 
-    processed["group_hard"] = [p["hard_group"] for p in parsed]
-    processed["group_soft"] = [p["soft_group"] for p in parsed]
-    processed["group_avoid"] = [p["avoid_group"] for p in parsed]
-    processed["room_type"] = [p["room_type"] for p in parsed]
+    processed["group_hard"] = parsed.apply(lambda x: x["hard_group"])
+    processed["group_soft"] = parsed.apply(lambda x: x["soft_group"])
+    processed["group_avoid"] = parsed.apply(lambda x: x["avoid_group"])
+    processed["room_type"] = parsed.apply(lambda x: x["room_type"])
 
     return processed
