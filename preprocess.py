@@ -3,7 +3,7 @@ import re
 
 
 # =========================================================
-# NORMALIZATION
+# NORMALIZE COLUMNS
 # =========================================================
 def normalize_columns(df):
     df = df.copy()
@@ -12,11 +12,15 @@ def normalize_columns(df):
         .str.replace("\n", " ", regex=False)
         .str.replace("\ufeff", "", regex=False)
         .str.strip()
+        .str.lower()
     )
     return df
 
 
-def norm(text):
+# =========================================================
+# CLEAN TEXT
+# =========================================================
+def clean(text):
     text = str(text).lower()
     text = re.sub(r"[^\w\sа-яё]", " ", text)
     text = re.sub(r"\s+", " ", text)
@@ -24,7 +28,7 @@ def norm(text):
 
 
 # =========================================================
-# GENDER (простая эвристика)
+# GENDER
 # =========================================================
 def detect_gender(fio):
     parts = str(fio).split()
@@ -34,12 +38,12 @@ def detect_gender(fio):
 
 
 # =========================================================
-# RESIDENT PARSER (УЛУЧШЕННЫЙ)
+# RESIDENT
 # =========================================================
 def parse_resident(v):
     v = str(v).lower()
 
-    if any(x in v for x in ["не буду", "не прожив", "не планирую", "отказ"]):
+    if any(x in v for x in ["не буду", "не прожив", "не проживает", "отказ"]):
         return False
 
     return True
@@ -49,45 +53,40 @@ def parse_resident(v):
 # ROOM TYPE
 # =========================================================
 def detect_room_type(text):
-    text = norm(text)
+    t = clean(text)
 
-    if "одномест" in text:
+    if "одномест" in t:
         return 1
-    if "двухмест" in text or "2 мест" in text:
+    if "двухмест" in t or "2 мест" in t:
         return 2
-    if "трехмест" in text or "3 мест" in text:
+    if "трехмест" in t or "3 мест" in t:
         return 3
 
     return None
 
 
 # =========================================================
-# FUZZY FIO MATCH (ВАЖНО)
+# FIO MATCH (СТАБИЛЬНЫЙ)
 # =========================================================
 def fio_match(text, fio):
-    """
-    матчим не строго, а по фамилии + части имени
-    """
-    text = norm(text)
-    fio_norm = norm(fio)
+    text = clean(text)
+    fio = clean(fio)
 
-    parts = fio_norm.split()
-
+    parts = fio.split()
     if not parts:
         return False
 
     surname = parts[0]
 
-    # если фамилия есть — уже считаем матч
-    if surname in text:
-        return True
+    if surname not in text:
+        return False
 
-    # fallback: инициалы типа "а с" или "ас"
     initials = "".join([p[0] for p in parts[1:] if p])
-    if initials and initials in text.replace(" ", ""):
-        return True
 
-    return False
+    if initials:
+        return initials in text.replace(" ", "")
+
+    return True
 
 
 # =========================================================
@@ -95,25 +94,19 @@ def fio_match(text, fio):
 # =========================================================
 def parse_comment(comment, fio_list):
 
-    text = norm(comment)
+    text = clean(comment)
 
     hard = []
     soft = []
     avoid = []
 
-    # -------------------------
-    # HARD GROUP (люди в тексте)
-    # -------------------------
     for fio in fio_list:
         if fio_match(text, fio):
             hard.append(fio)
 
-    # -------------------------
-    # ROOM TYPE
-    # -------------------------
     room_type = detect_room_type(text)
 
-    if "без подсел" in text or "одномест" in text:
+    if "без подсел" in text:
         room_type = 1
 
     return {
@@ -125,7 +118,7 @@ def parse_comment(comment, fio_list):
 
 
 # =========================================================
-# MAIN
+# MAIN PIPELINE
 # =========================================================
 def preprocess_guests(df):
 
@@ -135,13 +128,13 @@ def preprocess_guests(df):
     # -------------------------
     # BASIC
     # -------------------------
-    processed["fio"] = df["ФИО"].astype(str)
+    processed["fio"] = df["фио"].astype(str)
 
     # -------------------------
     # RESIDENT
     # -------------------------
     processed["resident"] = df.get(
-        "Выбор тарифа за проживание",
+        "выбор тарифа за проживание",
         ""
     ).apply(parse_resident)
 
@@ -150,28 +143,23 @@ def preprocess_guests(df):
     # -------------------------
     processed["gender"] = processed["fio"].apply(detect_gender)
 
-    processed["city"] = df.get("Город", "UNKNOWN")
-    processed["status"] = df.get("Статус", "student")
+    processed["city"] = df.get("город", "unknown")
+    processed["status"] = df.get("статус", "student")
 
     # -------------------------
-    # NIGHTS (оставляем только для резидентов)
+    # NIGHTS
     # -------------------------
     processed["nights"] = [[] for _ in range(len(processed))]
 
-    processed.loc[
-        processed["resident"] == True,
-        "nights"
-    ] = df.apply(lambda r: [], axis=1)
-
     # -------------------------
-    # COMMENT ENGINE (FIXED)
+    # COMMENTS SAFE
     # -------------------------
-    fio_list = processed["fio"].tolist()
+    fio_list = df["фио"].astype(str).tolist()
 
-    if "Комментарий" in df.columns:
-        comment_col = df["Комментарий"].fillna("").astype(str)
+    if "комментарий" in df.columns:
+        comment_col = df["комментарий"].fillna("").astype(str)
     else:
-        comment_col = pd.Series([""] * len(processed))
+        comment_col = pd.Series([""] * len(df))
 
     parsed = comment_col.apply(lambda c: parse_comment(c, fio_list))
 
