@@ -2,61 +2,81 @@ import pandas as pd
 import re
 
 
-NIGHT_MAP = {
-    "31 мая": 31,
-    "1 июня": 32,
-    "2 июня": 33,
-    "3 июня": 34,
-    "4 июня": 35,
-    "5 июня": 36,
-}
+ROOM_KEYWORD = "Комната"
+MEAL_KEYWORDS = ["Завтрак", "Обед", "Ужин"]
+BUS_KEYWORDS = ["Автобус"]
 
 
-def detect_gender(fio: str):
+# -------------------------
+# имя → пол (очень грубо)
+# -------------------------
+def detect_gender(fio):
     if not fio:
         return "M"
     fio = fio.strip().lower()
     return "F" if fio.split()[0].endswith(("а", "я")) else "M"
 
 
-def detect_status(text: str):
-    if not text:
-        return "student"
-    t = str(text).lower()
-    if "проф" in t:
-        return "professor"
-    return "student"
-
-
+# -------------------------
+# извлечение "комнатных ночей"
+# -------------------------
 def extract_nights(row):
-    """
-    Берём все колонки вида:
-    '31 мая / Комната (ночь ...)'
-    """
+
     nights = []
 
     for col, val in row.items():
-        if not isinstance(col, str):
+
+        if ROOM_KEYWORD not in col:
             continue
 
-        if "Комната" not in col:
+        if pd.isna(val) or str(val).strip() == "":
             continue
 
-        if pd.isna(val):
-            continue
-
-        for key, day in NIGHT_MAP.items():
-            if key in col:
-                nights.append(day)
+        # ищем дату внутри названия столбца
+        match = re.search(r"(\d{1,2})", col)
+        if match:
+            nights.append(int(match.group(1)))
 
     return sorted(set(nights))
 
 
-def preprocess_guests(df: pd.DataFrame):
+# -------------------------
+# комментарии → группы
+# -------------------------
+def extract_group(row):
+
+    comment = str(row.get("Комментарий", "")).lower()
+
+    # ищем фамилии/инициалы (очень упрощённо)
+    names = re.findall(r"[а-яёa-z]{4,}", comment, re.IGNORECASE)
+
+    # убираем мусорные слова
+    stop = {"прошу", "поселить", "вместе", "если", "можно"}
+
+    group = [n for n in names if n not in stop]
+
+    return group if group else []
+
+
+# -------------------------
+# статус
+# -------------------------
+def detect_status(row):
+    s = str(row.get("Выбор тарифа за проживание", "")).lower()
+
+    if "проф" in s:
+        return "professor"
+    return "student"
+
+
+# -------------------------
+# main preprocess
+# -------------------------
+def preprocess_guests(df):
 
     df = df.copy()
 
-    processed = []
+    result = []
 
     for _, row in df.iterrows():
 
@@ -69,15 +89,31 @@ def preprocess_guests(df: pd.DataFrame):
         if not nights:
             continue
 
-        processed.append({
+        meals = {
+            "breakfast": [],
+            "lunch": [],
+            "dinner": []
+        }
+
+        for col, val in row.items():
+
+            if pd.isna(val):
+                continue
+
+            for k in MEAL_KEYWORDS:
+                if k in col and str(val).strip() != "":
+                    meals[k.lower()] = True
+
+        result.append({
             "id": row.get("ID"),
             "fio": fio,
             "gender": detect_gender(fio),
-            "status": detect_status(row.get("Статус") or row.get("Должность")),
-            "city": str(row.get("Город", "UNKNOWN")),
+            "status": detect_status(row),
             "nights": nights,
-            "age": None,  # если появится дата рождения — легко добавить
+            "group": extract_group(row),
+            "car": row.get("Номер автомобиля"),
+            "comment": row.get("Комментарий"),
             "raw": row.to_dict()
         })
 
-    return pd.DataFrame(processed)
+    return pd.DataFrame(result)
