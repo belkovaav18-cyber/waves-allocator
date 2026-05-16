@@ -4,7 +4,7 @@ from allocator import allocate_rooms
 
 from preprocess import preprocess_guests
 import pandas as pd
-
+from utils.google_sheets import save_allocations_to_gsheet
 from utils.google_sheets import load_guests_from_gsheet
 st.set_page_config(
     page_title="Система расселения",
