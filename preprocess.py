@@ -1,69 +1,99 @@
 import pandas as pd
 import re
+from datetime import datetime
 
 
-ROOM_WORD = "Комната"
+# =========================================================
+# helpers
+# =========================================================
+def normalize_name(name: str):
+    return re.sub(r"\s+", " ", str(name).strip().lower())
 
 
-def detect_gender(fio):
-    if not fio:
-        return "M"
-    return "F" if fio.strip().split()[0].endswith(("а", "я")) else "M"
-
-
-def extract_nights(row):
-    nights = []
-
-    for col, val in row.items():
-        if ROOM_WORD not in col:
-            continue
-        if pd.isna(val) or str(val).strip() == "":
-            continue
-
-        m = re.search(r"(\d{1,2})", col)
-        if m:
-            nights.append(int(m.group(1)))
-
-    return sorted(set(nights))
-
-
-def extract_group(comment):
+def extract_hard_group(comment):
+    """
+    Явные требования: "Белоножко ДФ и Черновым АС"
+    """
     if not comment:
         return []
 
-    comment = str(comment)
+    text = str(comment).lower()
 
-    # ищем фамилии/инициалы
-    names = re.findall(r"[А-ЯЁA-Z][а-яёa-z]{2,}", comment)
+    # ищем куски похожие на ФИО
+    matches = re.findall(r"[а-яё]{4,}", text, re.IGNORECASE)
 
-    stop = {"прошу", "поселить", "вместе", "если", "можно"}
+    stop = {
+        "прошу", "поселить", "вместе", "пожалуйста",
+        "спасибо", "меня", "моим", "соавтором"
+    }
 
-    return [n for n in names if n.lower() not in stop]
+    names = []
 
-
-def preprocess(df):
-
-    res = []
-
-    for _, row in df.iterrows():
-
-        fio = row.get("ФИО")
-        if pd.isna(fio):
+    for m in matches:
+        m = m.strip()
+        if m in stop:
             continue
-
-        nights = extract_nights(row)
-
-        if not nights:
+        if len(m) < 4:
             continue
+        names.append(normalize_name(m))
 
-        res.append({
-            "id": row.get("ID"),
-            "fio": fio,
-            "gender": detect_gender(fio),
-            "status": str(row.get("Выбор тарифа за проживание", "student")),
-            "nights": nights,
-            "group": extract_group(row.get("Комментарий")),
-            "city": row.get("Город"),
-        })
+    return list(set(names))
 
-    return pd.DataFrame(res)
+
+def extract_soft_group(comment):
+    """
+    "соавтор", "вместе с коллегой"
+    """
+    if not comment:
+        return []
+
+    text = str(comment).lower()
+
+    soft_keywords = ["соавтор", "коллег", "вместе"]
+
+    if any(k in text for k in soft_keywords):
+        # мягкая связь, пока просто флаг
+        return ["soft_link"]
+
+    return []
+
+
+# =========================================================
+# core preprocess
+# =========================================================
+def preprocess_guests(df):
+
+    df = df.copy()
+
+    processed = pd.DataFrame()
+
+    processed["fio"] = (
+        df["Фамилия"].fillna("") + " " +
+        df["Имя"].fillna("") + " " +
+        df["Отчество"].fillna("")
+    ).str.strip()
+
+    processed["gender"] = df["Имя"].apply(
+        lambda x: "F" if str(x).lower().strip().endswith(("а", "я")) else "M"
+    )
+
+    processed["birthdate"] = pd.to_datetime(df.get("Дата рождения"), errors="coerce")
+
+    processed["checkin"] = pd.to_datetime(df.get("Заезд"), errors="coerce")
+    processed["checkout"] = pd.to_datetime(df.get("Отъезд"), errors="coerce")
+
+    processed["nights"] = df.get("Ночей", 0).fillna(0).astype(int)
+
+    processed["city"] = df.get("Город", "UNKNOWN").fillna("UNKNOWN")
+
+    processed["status"] = df.get("Статус", "student").fillna("student")
+
+    processed["comment"] = df.get("Комментарий", "").fillna("")
+
+    # =====================================================
+    # GROUPS
+    # =====================================================
+    processed["group_hard"] = processed["comment"].apply(extract_hard_group)
+    processed["group_soft"] = processed["comment"].apply(extract_soft_group)
+
+    return processed
