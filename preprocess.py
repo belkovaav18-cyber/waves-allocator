@@ -81,7 +81,13 @@ def preprocess_guests(df: pd.DataFrame):
 
     processed["fio"] = df["ФИО"]
     processed["gender"] = processed["fio"].apply(detect_gender)
-
+    processed["will_stay"] = (
+    df["Выбор тарифа за проживание"]
+    .astype(str)
+    .str.strip()
+    .str.lower()
+    .ne("не буду проживать")
+)
     processed["city"] = df.get("Город", "UNKNOWN")
     processed["status"] = df.get("Статус", "student")
     processed["comment"] = df.get("Комментарий", "")
