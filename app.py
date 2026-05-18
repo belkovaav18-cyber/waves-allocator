@@ -26,7 +26,10 @@ guests_df = preprocess_guests(raw)
 def extract_dates_from_guest(guest_fio, raw_df):
     """
     Извлекает даты заезда и отъезда для конкретного гостя по ФИО.
-    Возвращает (дата_заезда, дата_отъезда) в формате строки.
+    
+    Логика:
+    - Заезд = день начала первой выбранной ночи (если ночь на 1 июня → заезд 31 мая)
+    - Отъезд = день последней выбранной ночи (если последняя ночь на 2 июня → отъезд 2 июня)
     """
     month_map = {
         "мая": 5, "июня": 6, "июля": 7, "августа": 8,
@@ -57,49 +60,45 @@ def extract_dates_from_guest(guest_fio, raw_df):
     if not selected_nights:
         return "", ""
     
-    # Функция для извлечения даты из названия колонки
+    # Функция для извлечения (месяц, день, дата) из названия колонки
     def get_date_from_column(col_str):
         match = re.search(r"ночь на (\d+) (\w+)", col_str)
         if match:
             day = int(match.group(1))
             month_name = match.group(2)
             month = month_map.get(month_name, 6)
-            return (month, day)
-        return (99, 99)
+            year = 2026
+            return (month, day, datetime(year, month, day))
+        return (99, 99, None)
     
     # Сортируем ночи по дате
-    selected_nights.sort(key=get_date_from_column)
+    nights_with_dates = []
+    for night in selected_nights:
+        month, day, date = get_date_from_column(night)
+        if date:
+            nights_with_dates.append((date, night, month, day))
     
-    # Первая ночь = дата заезда
-    first_night = selected_nights[0]
-    match_first = re.search(r"ночь на (\d+) (\w+)", first_night)
-    if match_first:
-        day = int(match_first.group(1))
-        month_name = match_first.group(2)
-        month = month_map.get(month_name, 6)
-        year = 2026
-        
-        # Заезд = день до ночи (если ночь на 1 июня, заезд 31 мая)
-        if month == 6 and day == 1:
-            check_in = datetime(year, 5, 31)
-        else:
-            check_in = datetime(year, month, day - 1)
-        check_in_str = check_in.strftime("%d.%m.%Y")
-    else:
-        check_in_str = ""
+    nights_with_dates.sort(key=lambda x: x[0])  # сортируем по дате
     
-    # Последняя ночь = дата отъезда
-    last_night = selected_nights[-1]
-    match_last = re.search(r"ночь на (\d+) (\w+)", last_night)
-    if match_last:
-        day = int(match_last.group(1))
-        month_name = match_last.group(2)
-        month = month_map.get(month_name, 6)
-        year = 2026
-        check_out = datetime(year, month, day + 1)
-        check_out_str = check_out.strftime("%d.%m.%Y")
+    if not nights_with_dates:
+        return "", ""
+    
+    # Первая ночь = определяем дату заезда
+    first_date, first_night, first_month, first_day = nights_with_dates[0]
+    
+    # Заезд = день до ночи (если ночь на 1 июня, заезд 31 мая)
+    if first_month == 6 and first_day == 1:
+        check_in = datetime(2026, 5, 31)
     else:
-        check_out_str = ""
+        check_in = datetime(2026, first_month, first_day - 1)
+    check_in_str = check_in.strftime("%d.%m.%Y")
+    
+    # Последняя ночь = определяем дату отъезда
+    # Отъезд = день последней ночи (не следующий!)
+    # Например: если последняя ночь на 2 июня → выезд 2 июня (утром)
+    last_date, last_night, last_month, last_day = nights_with_dates[-1]
+    check_out = datetime(2026, last_month, last_day)
+    check_out_str = check_out.strftime("%d.%m.%Y")
     
     return check_in_str, check_out_str
 
@@ -160,7 +159,7 @@ if st.button("🚀 Расселить"):
     st.subheader("Debug информация")
     st.json(debug)
     
-    # Сохраняем в Google Sheets (добавит тариф и комментарий автоматически)
+    # Сохраняем в Google Sheets
     save_results_with_details(
         SHEET_ID, 
         "Result", 
