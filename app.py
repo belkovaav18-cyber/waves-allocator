@@ -24,8 +24,79 @@ guests_df = preprocess_guests(raw)
 # ФУНКЦИИ ДЛЯ РАСЧЕТА ДАТ
 # =========================================================
 def extract_dates_from_guest(guest_fio, raw_df):
-    # ... (оставляем как было)
-    pass
+    """
+    Извлекает даты заезда и отъезда для конкретного гостя по ФИО.
+    Возвращает (дата_заезда, дата_отъезда) в формате строки.
+    Всегда возвращает кортеж из двух строк (может быть пустым).
+    """
+    month_map = {
+        "мая": 5, "июня": 6, "июля": 7, "августа": 8,
+        "сентября": 9, "октября": 10, "ноября": 11, "декабря": 12,
+        "января": 1, "февраля": 2, "марта": 3, "апреля": 4
+    }
+    
+    # Находим строку с этим гостем
+    guest_row = None
+    for idx, row in raw_df.iterrows():
+        if row.get("ФИО") == guest_fio:
+            guest_row = row
+            break
+    
+    if guest_row is None:
+        return "", ""
+    
+    # Собираем все ночи, которые гость отмечал
+    selected_nights = []
+    
+    for col in raw_df.columns:
+        col_str = str(col)
+        if "Комната" in col_str and "ночь" in col_str:
+            value = guest_row.get(col, "")
+            if pd.notna(value) and str(value).strip().lower() not in ["", "нет", "-", "false", "nan"]:
+                selected_nights.append(col_str)
+    
+    if not selected_nights:
+        return "", ""
+    
+    # Функция для извлечения (месяц, день, дата) из названия колонки
+    def get_date_from_column(col_str):
+        match = re.search(r"ночь на (\d+) (\w+)", col_str)
+        if match:
+            day = int(match.group(1))
+            month_name = match.group(2)
+            month = month_map.get(month_name, 6)
+            year = 2026
+            return (month, day, datetime(year, month, day))
+        return (99, 99, None)
+    
+    # Сортируем ночи по дате
+    nights_with_dates = []
+    for night in selected_nights:
+        month, day, date = get_date_from_column(night)
+        if date:
+            nights_with_dates.append((date, night, month, day))
+    
+    nights_with_dates.sort(key=lambda x: x[0])
+    
+    if not nights_with_dates:
+        return "", ""
+    
+    # Первая ночь = определяем дату заезда
+    first_date, first_night, first_month, first_day = nights_with_dates[0]
+    
+    # Заезд = день до ночи (если ночь на 1 июня, заезд 31 мая)
+    if first_month == 6 and first_day == 1:
+        check_in = datetime(2026, 5, 31)
+    else:
+        check_in = datetime(2026, first_month, first_day - 1)
+    check_in_str = check_in.strftime("%d.%m.%Y")
+    
+    # Последняя ночь = определяем дату отъезда
+    last_date, last_night, last_month, last_day = nights_with_dates[-1]
+    check_out = datetime(2026, last_month, last_day)
+    check_out_str = check_out.strftime("%d.%m.%Y")
+    
+    return check_in_str, check_out_str
 
 
 # =========================================================
@@ -42,11 +113,9 @@ def get_building_and_floor(room_id):
         parts = room_str.split('-')
         building = parts[0]
         room_num = parts[1]
-        # Первая цифра номера комнаты = этаж
         floor = room_num[0] if room_num else '0'
         return building, floor
     else:
-        # Если без корпуса, берем первую цифру номера
         floor = room_str[0] if room_str else '0'
         return None, floor
 
@@ -54,19 +123,6 @@ def get_building_and_floor(room_id):
 def create_floor_layout(allocation_df, rooms_df):
     """
     Создает словарь с планом этажей.
-    
-    Структура:
-    {
-        "1": {  # корпус
-            "1": {  # этаж
-                "101": {"capacity": 2, "guests": ["Иванов И.И."]},
-                "102": {"capacity": 2, "guests": []},
-                ...
-            },
-            "2": {...}
-        },
-        "2": {...}  # желтый корпус
-    }
     """
     # Создаем словарь заселенных
     allocation_dict = {}
@@ -87,9 +143,8 @@ def create_floor_layout(allocation_df, rooms_df):
         
         building, floor = get_building_and_floor(room_id)
         
-        # Определяем корпус (если нет, то по первой цифре ID)
-        if building is None:
-            # Пробуем определить по формату: если ID начинается с 1 или 2
+        # Определяем корпус
+        if building is None or building == 'None':
             if str(room_id).startswith('1'):
                 building = '1'
             elif str(room_id).startswith('2'):
@@ -120,13 +175,16 @@ def render_floor_plan(layout, selected_building=None):
     if selected_building:
         buildings = [selected_building]
     else:
-        buildings = sorted(layout.keys())
+        buildings = sorted([b for b in layout.keys() if b != 'unknown'])
+        if 'unknown' in layout:
+            buildings.append('unknown')
     
     for building in buildings:
         if building not in layout:
             continue
-            
-        st.markdown(f"### 🏢 Корпус {building}")
+        
+        building_name = "Красный" if building == "1" else ("Желтый" if building == "2" else building)
+        st.markdown(f"### 🏢 Корпус {building_name}")
         
         floors = sorted(layout[building].keys(), key=int)
         
@@ -134,31 +192,28 @@ def render_floor_plan(layout, selected_building=None):
             st.markdown(f"#### 📍 Этаж {floor}")
             
             rooms = layout[building][floor]
-            
-            # Сортируем комнаты по номеру
             sorted_rooms = sorted(rooms.items(), key=lambda x: int(re.sub(r'\D', '', x[0])))
             
-            # Создаем сетку (4 колонки для комнат)
+            # Создаем сетку
             cols = st.columns(4)
             
             for idx, (room_id, room_data) in enumerate(sorted_rooms):
                 col = cols[idx % 4]
                 
-                # Определяем цвет в зависимости от заполненности
+                # Определяем цвет
                 if room_data['free_spots'] == 0:
-                    status_color = "#28a745"  # зеленый - полная
-                    status_text = "✅ Полностью"
+                    status_color = "#28a745"
+                    status_text = "✅ Полная"
                 elif room_data['free_spots'] == room_data['capacity']:
-                    status_color = "#dc3545"  # красный - пустая
+                    status_color = "#dc3545"
                     status_text = "❌ Пустая"
                 else:
-                    status_color = "#ffc107"  # желтый - частично
+                    status_color = "#ffc107"
                     status_text = f"⚠️ Свободно: {room_data['free_spots']}"
                 
                 # Формируем список гостей
                 guests_list = "<br>".join(room_data['guests']) if room_data['guests'] else "—"
                 
-                # Создаем карточку комнаты
                 with col:
                     st.markdown(
                         f"""
@@ -173,7 +228,7 @@ def render_floor_plan(layout, selected_building=None):
                                 {room_id}
                             </h3>
                             <p style="text-align: center; margin: 5px 0;">
-                                🛏️ {room_data['capacity']} места
+                                🛏️ {room_data['capacity']} {'место' if room_data['capacity'] == 1 else 'места'}
                             </p>
                             <p style="text-align: center; margin: 5px 0;">
                                 📊 {status_text}
@@ -196,7 +251,8 @@ def render_simple_floor_plan(layout):
     Упрощенная версия плана этажей (текстовая таблица)
     """
     for building in layout:
-        st.markdown(f"## Корпус {building}")
+        building_name = "Красный" if building == "1" else ("Желтый" if building == "2" else building)
+        st.markdown(f"## Корпус {building_name}")
         
         floors = sorted(layout[building].keys(), key=int)
         
@@ -206,7 +262,6 @@ def render_simple_floor_plan(layout):
             rooms = layout[building][floor]
             sorted_rooms = sorted(rooms.items(), key=lambda x: int(re.sub(r'\D', '', x[0])))
             
-            # Создаем DataFrame для отображения
             table_data = []
             for room_id, room_data in sorted_rooms:
                 guests_text = ", ".join(room_data['guests']) if room_data['guests'] else "—"
@@ -236,12 +291,13 @@ st.dataframe(guests_df)
 
 if st.button("🚀 Расселить"):
 
-    result, debug = smart_solve(
-        residents.to_dict("records"),
-        rooms
-    )
+    with st.spinner("Идет расселение..."):
+        result, debug = smart_solve(
+            residents.to_dict("records"),
+            rooms
+        )
     
-    # Добавляем даты
+    # Добавляем даты заезда/отъезда к результату
     result_with_dates = []
     for _, row in result.iterrows():
         guest_data = row.to_dict()
@@ -252,7 +308,7 @@ if st.button("🚀 Расселить"):
     
     result_df = pd.DataFrame(result_with_dates)
     
-    # Нерезиденты
+    # Обрабатываем нерезидентов
     non_residents_with_dates = []
     for _, row in non_residents.iterrows():
         guest_data = row.to_dict()
@@ -272,41 +328,47 @@ if st.button("🚀 Расселить"):
     # =========================================================
     st.subheader("🏠 План этажей с расселением")
     
-    # Создаем layout только для расселенных (не нерезидентов)
+    # Создаем layout только для расселенных
     allocated_guests = final_result[final_result["room_id"] != "не проживает"]
     
-    if len(allocated_guests) > 0:
+    if len(allocated_guests) > 0 and len(rooms_df) > 0:
         layout = create_floor_layout(allocated_guests, rooms_df)
         
-        # Выбор корпуса для отображения
-        building_filter = st.radio(
-            "Выберите корпус:",
-            options=["Все", "Красный (1)", "Желтый (2)"],
-            horizontal=True
-        )
-        
-        if building_filter == "Красный (1)":
-            selected_building = "1"
-        elif building_filter == "Желтый (2)":
-            selected_building = "2"
-        else:
-            selected_building = None
-        
-        # Выбор стиля отображения
-        view_style = st.radio(
-            "Стиль отображения:",
-            options=["Карточки", "Таблица"],
-            horizontal=True
-        )
-        
-        if view_style == "Карточки":
-            render_floor_plan(layout, selected_building)
-        else:
-            if selected_building:
-                filtered_layout = {selected_building: layout.get(selected_building, {})}
-                render_simple_floor_plan(filtered_layout)
+        if layout:
+            # Выбор корпуса
+            building_filter = st.radio(
+                "Выберите корпус:",
+                options=["Все", "Красный (1)", "Желтый (2)"],
+                horizontal=True
+            )
+            
+            if building_filter == "Красный (1)":
+                selected_building = "1"
+            elif building_filter == "Желтый (2)":
+                selected_building = "2"
             else:
-                render_simple_floor_plan(layout)
+                selected_building = None
+            
+            # Выбор стиля
+            view_style = st.radio(
+                "Стиль отображения:",
+                options=["Карточки", "Таблица"],
+                horizontal=True
+            )
+            
+            if view_style == "Карточки":
+                render_floor_plan(layout, selected_building)
+            else:
+                if selected_building:
+                    if selected_building in layout:
+                        filtered_layout = {selected_building: layout[selected_building]}
+                        render_simple_floor_plan(filtered_layout)
+                    else:
+                        st.warning(f"Корпус {selected_building} не найден")
+                else:
+                    render_simple_floor_plan(layout)
+        else:
+            st.info("Нет данных для отображения плана этажей")
     else:
         st.info("Нет данных о расселении для отображения")
     
