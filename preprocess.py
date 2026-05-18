@@ -59,6 +59,29 @@ def parse_resident(v):
 
 
 # =========================================================
+# TARIFF TYPE PARSER (НОВАЯ ФУНКЦИЯ)
+# =========================================================
+def parse_tariff_type(v):
+    """
+    Определяет тип тарифа:
+    - "without_subleaser" - размещение без подселения
+    - "with_subleaser" - размещение с подселением
+    - None - не определен
+    """
+    if pd.isna(v):
+        return None
+    
+    v_str = str(v).lower()
+    
+    if "без подсел" in v_str:
+        return "without_subleaser"
+    elif "с подсел" in v_str:
+        return "with_subleaser"
+    
+    return None
+
+
+# =========================================================
 # NIGHTS
 # =========================================================
 def extract_nights(row):
@@ -83,7 +106,7 @@ def extract_nights(row):
 
 
 # =========================================================
-# SHORT NAME BUILDER (УЛУЧШЕННАЯ ВЕРСИЯ)
+# SHORT NAME BUILDER
 # =========================================================
 def short_versions(fio):
     """Генерирует разные варианты написания ФИО для поиска"""
@@ -98,21 +121,21 @@ def short_versions(fio):
     patronymic = parts[2] if len(parts) > 2 else ""
     
     variants = [
-        fio,  # полное: "попкова анна андреевна"
-        surname,  # только фамилия: "попкова"
-        f"{surname} {name}",  # фамилия + имя: "попкова анна"
-        f"{surname} {name[0]}.{patronymic[0]}." if patronymic else f"{surname} {name[0]}.",  # "попкова а.а."
-        f"{surname} {name[0]}.{patronymic[0]}" if patronymic else f"{surname} {name[0]}",  # "попкова а.а"
-        f"{surname} {name[0]}",  # "попкова а"
+        fio,
+        surname,
+        f"{surname} {name}",
+        f"{surname} {name[0]}.{patronymic[0]}." if patronymic else f"{surname} {name[0]}.",
+        f"{surname} {name[0]}.{patronymic[0]}" if patronymic else f"{surname} {name[0]}",
+        f"{surname} {name[0]}",
     ]
     
-    # Варианты с падежными окончаниями (для русского языка)
+    # Варианты с падежными окончаниями
     name_variants = []
     if name.endswith("а"):
-        name_variants.append(name[:-1] + "ы")  # анна -> анны
-        name_variants.append(name[:-1] + "е")  # анна -> анне
-        name_variants.append(name[:-1] + "у")  # анна -> анну
-        name_variants.append(name[:-1] + "ой")  # анна -> анной
+        name_variants.append(name[:-1] + "ы")
+        name_variants.append(name[:-1] + "е")
+        name_variants.append(name[:-1] + "у")
+        name_variants.append(name[:-1] + "ой")
     
     if patronymic and patronymic.endswith("а"):
         name_variants.append(patronymic[:-1] + "ы")
@@ -128,10 +151,7 @@ def short_versions(fio):
 
 
 def extract_people_improved(comment, fio_list):
-    """
-    Улучшенная версия поиска людей в комментарии.
-    Учитывает падежи и частичные совпадения.
-    """
+    """Улучшенная версия поиска людей в комментарии"""
     text = norm(comment)
     found = []
     
@@ -142,18 +162,15 @@ def extract_people_improved(comment, fio_list):
             if len(v) < 3:
                 continue
             
-            # Прямое вхождение
             if v in text:
                 found.append(fio)
                 break
             
-            # Нечеткое сравнение
             score = fuzz.partial_ratio(v, text)
             if score >= 85:
                 found.append(fio)
                 break
             
-            # Специальная проверка для "с [фамилией]" конструкции
             pattern = rf"с\s+{re.escape(v)}"
             if re.search(pattern, text):
                 found.append(fio)
@@ -190,7 +207,6 @@ SINGLE_ROOM_NAMES = [extract_name_only(p) for p in SINGLE_ROOM_PEOPLE]
 # =========================================================
 # PREFERRED BUILDING FOR SPECIFIC PEOPLE
 # =========================================================
-# Список людей, которые должны быть в желтом корпусе (2)
 YELLOW_BUILDING_PEOPLE = [
     "Калиш А.Н.", "Калиш", "Цысарь С.А.", "Цысарь",
     "Князев", "Безменова", "Отинова", "Зорина", "Дьяконов",
@@ -199,15 +215,11 @@ YELLOW_BUILDING_PEOPLE = [
     "Юшков", "Останин", "Львов"
 ]
 
-# Нормализованные имена для поиска
 YELLOW_BUILDING_NAMES_NORM = [norm(name) for name in YELLOW_BUILDING_PEOPLE]
 
 
 def detect_forced_building(fio):
-    """
-    Определяет принудительный корпус для определенных людей.
-    Возвращает "yellow" для тех, кто должен быть в желтом корпусе.
-    """
+    """Определяет принудительный корпус для определенных людей"""
     fio_norm = norm(fio)
     
     for name in YELLOW_BUILDING_NAMES_NORM:
@@ -221,16 +233,12 @@ def detect_forced_building(fio):
 # PREFERRED BUILDING
 # =========================================================
 def detect_preferred_building(comment, fio=None):
-    """
-    Определяет желаемый корпус из комментария или из принудительного списка.
-    """
-    # Сначала проверяем принудительный список
+    """Определяет желаемый корпус из комментария или из принудительного списка"""
     if fio:
         forced = detect_forced_building(fio)
         if forced:
             return forced
     
-    # Затем проверяем комментарий
     text = norm(comment)
     if "красный" in text or "1 корпус" in text:
         return "red"
@@ -244,10 +252,7 @@ def detect_preferred_building(comment, fio=None):
 # PREFERRED FLOOR
 # =========================================================
 def detect_preferred_floor(comment):
-    """
-    Определяет желаемый этаж из комментария.
-    Возвращает номер этажа (int) или None.
-    """
+    """Определяет желаемый этаж из комментария"""
     text = norm(comment)
     
     patterns = [
@@ -274,14 +279,11 @@ def detect_preferred_floor(comment):
                 if word in text:
                     return num
     
-    if "не первый" in text or "не 1" in text:
-        return None
-    
     return None
 
 
 def get_floor_from_room_id(room_id):
-    """Извлекает номер этажа из ID комнаты."""
+    """Извлекает номер этажа из ID комнаты"""
     room_str = str(room_id)
     
     if '-' in room_str:
@@ -297,7 +299,7 @@ def get_floor_from_room_id(room_id):
 
 
 # =========================================================
-# SINGLE TARIFF
+# SINGLE TARIFF (старая функция для одноместного тарифа)
 # =========================================================
 def parse_single_tariff(row, df_original, idx):
     for col in df_original.columns:
@@ -314,7 +316,7 @@ def parse_single_tariff(row, df_original, idx):
 # =========================================================
 # COMMENT PARSER
 # =========================================================
-def parse_comment(comment, fio_list, single_tariff_flag=False, person_fio=None):
+def parse_comment(comment, fio_list, single_tariff_flag=False, person_fio=None, tariff_type=None):
     text = norm(comment)
 
     hard = []
@@ -331,10 +333,22 @@ def parse_comment(comment, fio_list, single_tariff_flag=False, person_fio=None):
     elif "трехмест" in text or "трёхмест" in text:
         room_type = 3
 
-    # Одноместный тариф
+    # Одноместный тариф (старая логика)
     if single_tariff_flag:
         room_type = 2
         hard.append("NO_SUBLEASE")
+
+    # НОВАЯ ЛОГИКА: тариф "без подселения"
+    if tariff_type == "without_subleaser":
+        # Селятся в двуместные номера, но без подселения других
+        room_type = 2
+        hard.append("NO_SUBLEASE")
+    
+    # НОВАЯ ЛОГИКА: тариф "с подселением"
+    if tariff_type == "with_subleaser":
+        # Селятся в двуместные номера, можно подселять других
+        room_type = 2
+        # Не добавляем ограничение NO_SUBLEASE
 
     # Спецсписок
     if person_fio and person_fio in SINGLE_ROOM_NAMES:
@@ -377,10 +391,7 @@ def parse_comment(comment, fio_list, single_tariff_flag=False, person_fio=None):
             "priority": 2
         })
 
-    # Определяем предпочтительный корпус (с учетом принудительного списка)
     preferred_building = detect_preferred_building(comment, person_fio)
-    
-    # Определяем желаемый этаж
     preferred_floor = detect_preferred_floor(comment)
 
     return {
@@ -409,6 +420,9 @@ def preprocess_guests(df):
     processed["city"] = df.get("Город", "UNKNOWN")
     processed["status"] = df.get("Статус", "student")
 
+    # НОВОЕ: определяем тип тарифа
+    processed["tariff_type"] = df.get("Выбор тарифа за проживание", "").apply(parse_tariff_type)
+
     # NIGHTS
     processed["nights"] = df.apply(extract_nights, axis=1)
     processed["nights"] = processed.apply(
@@ -431,21 +445,22 @@ def preprocess_guests(df):
     else:
         comments = df[comment_col].fillna("")
 
-    # Определяем одноместный тариф
+    # Определяем одноместный тариф (старая логика)
     single_tariff_flags = []
     for idx in df.index:
         flag = parse_single_tariff(df.loc[idx], df, idx)
         single_tariff_flags.append(flag)
 
-    # Парсим комментарии
+    # Парсим комментарии с учетом типа тарифа
     parsed = []
-    for i, (comment, fio) in enumerate(zip(comments, processed["fio"])):
+    for i, (comment, fio, tariff_type) in enumerate(zip(comments, processed["fio"], processed["tariff_type"])):
         parsed.append(
             parse_comment(
                 comment,
                 fio_list,
                 single_tariff_flag=single_tariff_flags[i],
-                person_fio=fio
+                person_fio=fio,
+                tariff_type=tariff_type
             )
         )
 
@@ -469,10 +484,10 @@ def preprocess_guests(df):
 
 
 # =========================================================
-# ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ДЛЯ ФИЛЬТРАЦИИ КОМНАТ
+# ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ДЛЯ ФИЛЬТРАЦИИ
 # =========================================================
 def filter_rooms_by_floor(rooms, preferred_floor):
-    """Фильтрует комнаты по желаемому этажу."""
+    """Фильтрует комнаты по желаемому этажу"""
     if preferred_floor is None:
         return rooms
     
@@ -487,7 +502,7 @@ def filter_rooms_by_floor(rooms, preferred_floor):
 
 
 def filter_rooms_by_building(rooms, preferred_building):
-    """Фильтрует комнаты по желаемому корпусу."""
+    """Фильтрует комнаты по желаемому корпусу"""
     if preferred_building is None:
         return rooms
     
@@ -497,11 +512,9 @@ def filter_rooms_by_building(rooms, preferred_building):
         room_str = str(room_id)
         
         if preferred_building == "yellow":
-            # Желтый корпус - комнаты, начинающиеся с 2- или 2
             if room_str.startswith('2-') or room_str.startswith('2'):
                 filtered.append(room)
         elif preferred_building == "red":
-            # Красный корпус - комнаты, начинающиеся с 1- или 1
             if room_str.startswith('1-') or room_str.startswith('1'):
                 filtered.append(room)
     
