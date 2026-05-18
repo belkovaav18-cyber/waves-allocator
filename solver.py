@@ -23,6 +23,52 @@ def conflict_cost(a, b):
 
 
 # =========================================================
+# HELPER: GET FLOOR FROM ROOM ID
+# =========================================================
+def get_floor_from_room_id(room_id):
+    """
+    Извлекает номер этажа из ID комнаты.
+    Примеры:
+    - "1-101" -> 1 (первая цифра после дефиса)
+    - "101" -> 1 (первая цифра номера)
+    - "2-215" -> 2
+    """
+    room_str = str(room_id)
+    
+    if '-' in room_str:
+        after_hyphen = room_str.split('-')[1]
+        if after_hyphen and after_hyphen[0].isdigit():
+            return int(after_hyphen[0])
+    
+    digits = ''.join(filter(str.isdigit, room_str))
+    if digits and digits[0].isdigit():
+        return int(digits[0])
+    
+    return None
+
+
+# =========================================================
+# HELPER: GET BUILDING FROM ROOM ID
+# =========================================================
+def get_building_from_room_id(room_id):
+    """
+    Извлекает номер корпуса из ID комнаты.
+    Примеры:
+    - "1-101" -> 1 (красный корпус)
+    - "2-215" -> 2 (желтый корпус)
+    - "101" -> None (неопределен)
+    """
+    room_str = str(room_id)
+    
+    if '-' in room_str:
+        building = room_str.split('-')[0]
+        if building.isdigit():
+            return int(building)
+    
+    return None
+
+
+# =========================================================
 # SOLVER
 # =========================================================
 def solve(guests, rooms):
@@ -82,6 +128,7 @@ def solve(guests, rooms):
                     model.Add(
                         x[g, r] == x[h, r]
                     )
+    
     # =====================================================
     # COUPLE / DOUBLE BED LOGIC
     # =====================================================
@@ -90,11 +137,9 @@ def solve(guests, rooms):
         hard_group = guests[g].get("group_hard", [])
         req = guests[g].get("room_type")
     
-        # только пары
         if len(hard_group) != 1:
             continue
     
-        # только двухместное пожелание
         if req != 2:
             continue
     
@@ -105,17 +150,13 @@ def solve(guests, rooms):
             if guests[h]["fio"] != partner_fio:
                 continue
     
-            # ищем комнаты
             for r in R:
     
                 cap = int(rooms[r]["вместимость"])
     
-                # только двухместные комнаты
                 if cap != 2:
                     continue
     
-                # если оба в комнате ->
-                # больше никого нельзя
                 both = model.NewBoolVar(
                     f"couple_{g}_{h}_{r}"
                 )
@@ -127,14 +168,61 @@ def solve(guests, rooms):
                     both >= x[g, r] + x[h, r] - 1
                 )
     
-                # ровно 2 человека в комнате
                 model.Add(
                     sum(x[k, r] for k in G)
                     <= 2
                 ).OnlyEnforceIf(both)
 
-    
-    
+    # =====================================================
+    # HARD: NO SUBLEASE (одноместный тариф)
+    # =====================================================
+    for g in G:
+        if guests[g].get("require_no_subleaser", False):
+            for r in R:
+                cap = int(rooms[r]["вместимость"])
+                # Если комната на 2 места, то нельзя подселять других
+                if cap == 2:
+                    model.Add(
+                        sum(x[k, r] for k in G) <= 1
+                    ).OnlyEnforceIf(x[g, r])
+
+    # =====================================================
+    # HARD: MUST BE SINGLE ROOM (спецсписок)
+    # =====================================================
+    for g in G:
+        if guests[g].get("must_be_single_room", False):
+            for r in R:
+                cap = int(rooms[r]["вместимость"])
+                if cap != 1:
+                    model.Add(x[g, r] == 0)
+
+    # =====================================================
+    # SOFT: PREFERRED BUILDING (ЖЕЛАТЕЛЬНЫЙ КОРПУС)
+    # =====================================================
+    for g in G:
+        preferred_building = guests[g].get("preferred_building")
+        if preferred_building:
+            building_num = 1 if preferred_building == "red" else 2
+            for r in R:
+                room_building = get_building_from_room_id(rooms[r]["room_id"])
+                if room_building != building_num:
+                    penalty = model.NewBoolVar(f"building_penalty_{g}_{r}")
+                    model.Add(penalty == x[g, r])
+                    objective.append(40 * penalty)  # штраф за нежелательный корпус
+
+    # =====================================================
+    # SOFT: PREFERRED FLOOR (ЖЕЛАТЕЛЬНЫЙ ЭТАЖ)
+    # =====================================================
+    for g in G:
+        preferred_floor = guests[g].get("preferred_floor")
+        if preferred_floor is not None:
+            for r in R:
+                room_floor = get_floor_from_room_id(rooms[r]["room_id"])
+                if room_floor != preferred_floor:
+                    penalty = model.NewBoolVar(f"floor_penalty_{g}_{r}")
+                    model.Add(penalty == x[g, r])
+                    objective.append(25 * penalty)  # штраф за нежелательный этаж
+
     # =====================================================
     # CONFLICTS
     # =====================================================
