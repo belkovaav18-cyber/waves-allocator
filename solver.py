@@ -197,18 +197,26 @@ def solve(guests, rooms):
                     model.Add(x[g, r] == 0)
 
     # =====================================================
-    # SOFT: PREFERRED BUILDING (ЖЕЛАТЕЛЬНЫЙ КОРПУС)
+    # HARD: FORCED BUILDING (ПРИНУДИТЕЛЬНЫЙ КОРПУС - ЖЕЛТЫЙ)
     # =====================================================
+    # Люди из списка должны быть ТОЛЬКО в желтом корпусе
     for g in G:
         preferred_building = guests[g].get("preferred_building")
-        if preferred_building:
-            building_num = 1 if preferred_building == "red" else 2
+        if preferred_building == "yellow":
             for r in R:
                 room_building = get_building_from_room_id(rooms[r]["room_id"])
-                if room_building != building_num:
-                    penalty = model.NewBoolVar(f"building_penalty_{g}_{r}")
+                # Если комната НЕ в желтом корпусе (не 2-xxx и не 2xx)
+                if room_building != 2:
+                    model.Add(x[g, r] == 0)
+        
+        # Для красного корпуса - мягкое предпочтение (штраф)
+        elif preferred_building == "red":
+            for r in R:
+                room_building = get_building_from_room_id(rooms[r]["room_id"])
+                if room_building != 1:
+                    penalty = model.NewBoolVar(f"red_building_penalty_{g}_{r}")
                     model.Add(penalty == x[g, r])
-                    objective.append(40 * penalty)  # штраф за нежелательный корпус
+                    objective.append(40 * penalty)
 
     # =====================================================
     # SOFT: PREFERRED FLOOR (ЖЕЛАТЕЛЬНЫЙ ЭТАЖ)
@@ -221,7 +229,7 @@ def solve(guests, rooms):
                 if room_floor != preferred_floor:
                     penalty = model.NewBoolVar(f"floor_penalty_{g}_{r}")
                     model.Add(penalty == x[g, r])
-                    objective.append(25 * penalty)  # штраф за нежелательный этаж
+                    objective.append(25 * penalty)
 
     # =====================================================
     # CONFLICTS
@@ -407,3 +415,27 @@ def solve(guests, rooms):
                 })
 
     return pd.DataFrame(result)
+
+
+# =====================================================
+# SMART SOLVE (обертка для вызова)
+# =====================================================
+def smart_solve(guests, rooms):
+    """Обертка для solve с обработкой ошибок и отладкой"""
+    debug = {
+        "total_guests": len(guests),
+        "total_rooms": len(rooms),
+        "yellow_building_people": [],
+        "red_building_people": []
+    }
+    
+    # Собираем статистику по предпочтениям корпусов
+    for guest in guests:
+        if guest.get("preferred_building") == "yellow":
+            debug["yellow_building_people"].append(guest["fio"])
+        elif guest.get("preferred_building") == "red":
+            debug["red_building_people"].append(guest["fio"])
+    
+    result_df = solve(guests, rooms)
+    
+    return result_df, debug
