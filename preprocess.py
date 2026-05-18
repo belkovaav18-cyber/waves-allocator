@@ -7,9 +7,7 @@ from rapidfuzz import fuzz
 # COLUMN NORMALIZATION
 # =========================================================
 def normalize_columns(df):
-
     df = df.copy()
-
     df.columns = (
         df.columns
         .astype(str)
@@ -17,7 +15,6 @@ def normalize_columns(df):
         .str.replace("\ufeff", "", regex=False)
         .str.strip()
     )
-
     return df
 
 
@@ -25,7 +22,6 @@ def normalize_columns(df):
 # HELPERS
 # =========================================================
 def norm(x):
-
     return re.sub(
         r"\s+",
         " ",
@@ -37,12 +33,9 @@ def norm(x):
 # GENDER
 # =========================================================
 def detect_gender(fio):
-
     parts = str(fio).split()
-
     if not parts:
         return "M"
-
     return (
         "F"
         if parts[0].lower().endswith(("а", "я"))
@@ -54,18 +47,14 @@ def detect_gender(fio):
 # RESIDENT PARSER
 # =========================================================
 def parse_resident(v):
-
     if pd.isna(v):
         return True
-
     v = str(v).lower()
-
     if (
         "не буду" in v
         or "не прожива" in v
     ):
         return False
-
     return True
 
 
@@ -73,33 +62,23 @@ def parse_resident(v):
 # NIGHTS
 # =========================================================
 def extract_nights(row):
-
     nights = []
-
     for col in row.index:
-
         col_str = str(col).lower()
         val = row[col]
-
         if pd.isna(val):
             continue
-
         val = str(val).strip().lower()
-
         if (
             "ноч" not in col_str
             and "комнат" not in col_str
         ):
             continue
-
         if val in ["", "нет", "0", "-", "false"]:
             continue
-
         match = re.search(r"(\d+)", col_str)
-
         if match:
             nights.append(int(match.group(1)))
-
     return sorted(list(set(nights)))
 
 
@@ -107,36 +86,26 @@ def extract_nights(row):
 # SHORT NAME BUILDER
 # =========================================================
 def short_versions(fio):
-
     fio = norm(fio)
-
     parts = fio.split()
-
     if len(parts) < 2:
         return []
-
     surname = parts[0]
-
     initials = ""
-
     for p in parts[1:]:
         initials += p[0]
-
     variants = [
         fio,
         surname,
         f"{surname} {initials}",
     ]
-
     if len(initials) >= 2:
         variants.append(
             f"{surname} {initials[0]}.{initials[1]}."
         )
-
         variants.append(
             f"{surname} {initials[0]}.{initials[1]}"
         )
-
     return variants
 
 
@@ -144,38 +113,98 @@ def short_versions(fio):
 # FIND PEOPLE IN COMMENT
 # =========================================================
 def extract_people(comment, fio_list):
-
     text = norm(comment)
-
     found = []
-
     for fio in fio_list:
-
         variants = short_versions(fio)
-
         for v in variants:
-
             if len(v) < 4:
                 continue
-
             if v in text:
                 found.append(fio)
                 break
-
             score = fuzz.partial_ratio(v, text)
-
             if score >= 90:
                 found.append(fio)
                 break
-
     return list(set(found))
 
 
 # =========================================================
-# COMMENT PARSER
+# SINGLE ROOM LIST (спецсписок)
 # =========================================================
-def parse_comment(comment, fio_list):
+SINGLE_ROOM_PEOPLE = [
+    "Макаров В.А. – МГУ",
+    "Пирогов Ю.А. – МГУ",
+    "Пятаков А.П. – МГУ",
+    "Руденко О.В. – академик, МГУ",
+    "Сазонов С.В. – НИЦ «Курчатовский институт»",
+    "Сапожников О.А. – МГУ",
+    "Тимофеев И.В. – ИФ СО РАН",
+    "Храмов А.Е. – РЭУ им. Г.В. Плеханова",
+    "Цысарь С.А. – МГУ",
+    "Чашечкин Ю.Д. – ИПМех РАН",
+    "Черепенин В.А. – академик, ИРЭ РАН",
+    "Шандаров С.М. – ТУСУР",
+    "Козарь А.В. – МГУ (председатель)",
+    "Калиш А.Н. – МГУ (секретарь)",
+    "Архипов Р.М. – ФТИ им. А.Ф. Иоффе",
+    "Балакший В.И. – МГУ",
+    "Белотелов В.И. – МГУ",
+    "Боголюбов А.Н. – МГУ",
+    "Бородачев Л.В. – МГУ",
+    "Бугай А.Н. – ОИЯИ",
+    "Денисов В.И. – МГУ",
+    "Звездин А.К. – ИОФ РАН",
+    "Игнатьева Д.О. – МГУ",
+    "Короновский А.А. – СГУ",
+    "Котова С.П. – Самарский филиал ФИАН",
+]
 
+# Функция для извлечения фамилии (без организации)
+def extract_name_only(full_str):
+    """Извлекает Фамилию И.О. из строки типа 'Макаров В.А. – МГУ'"""
+    if " – " in full_str:
+        return full_str.split(" – ")[0]
+    return full_str
+
+
+SINGLE_ROOM_NAMES = [extract_name_only(p) for p in SINGLE_ROOM_PEOPLE]
+
+
+# =========================================================
+# PREFERRED BUILDING
+# =========================================================
+def detect_preferred_building(comment):
+    """Определяет желаемый корпус по комментарию"""
+    text = norm(comment)
+    
+    if "красный" in text or "1 корпус" in text:
+        return "red"  # комнаты с id 1-xxx
+    elif "желтый" in text or "2 корпус" in text:
+        return "yellow"  # комнаты с id 2-xxx
+    
+    return None
+
+
+# =========================================================
+# SINGLE TARIFF (одноместный тариф)
+# =========================================================
+def parse_single_tariff(row, df_original):
+    """Проверяет, выбран ли одноместный тариф"""
+    # Ищем колонку с тарифом
+    for col in df_original.columns:
+        if "тариф" in norm(col) or "проживание" in norm(col):
+            val = str(df_original.loc[row.name, col]).lower()
+            if "одномест" in val or "single" in val:
+                return True
+    return False
+
+
+# =========================================================
+# COMMENT PARSER (расширенная версия)
+# =========================================================
+def parse_comment(comment, fio_list, fio_full_list, single_tariff_flag=False, person_fio=None):
     text = norm(comment)
 
     hard = []
@@ -187,7 +216,7 @@ def parse_comment(comment, fio_list):
     room_type = None
 
     # =====================================================
-    # ROOM TYPE
+    # ROOM TYPE (старая логика)
     # =====================================================
 
     if (
@@ -195,14 +224,12 @@ def parse_comment(comment, fio_list):
         or "без подсел" in text
     ):
         room_type = 1
-
     elif (
         "двухмест" in text
         or "двух-мест" in text
         or "двуспаль" in text
     ):
         room_type = 2
-
     elif (
         "трехмест" in text
         or "трёхмест" in text
@@ -210,18 +237,28 @@ def parse_comment(comment, fio_list):
         room_type = 3
 
     # =====================================================
+    # НОВОЕ: одноместный тариф → нужно селить в двушки без подселений
+    # =====================================================
+    if single_tariff_flag:
+        room_type = 2  # двушка
+        # Добавляем флаг, что нельзя подселять
+        hard.append("NO_SUBLEASE")
+
+    # =====================================================
+    # НОВОЕ: спецсписок → только однушки
+    # =====================================================
+    if person_fio in SINGLE_ROOM_NAMES:
+        room_type = 1  # однушка
+        hard.append("MUST_BE_SINGLE")
+
+    # =====================================================
     # PEOPLE
     # =====================================================
-
-    found_people = extract_people(
-        text,
-        fio_list
-    )
+    found_people = extract_people(text, fio_list)
 
     # =====================================================
     # TOGETHER WORDS
     # =====================================================
-
     together_words = [
         "вместе",
         "совместно",
@@ -233,71 +270,68 @@ def parse_comment(comment, fio_list):
         "с мужем",
         "с супруг",
     ]
-
     if any(w in text for w in together_words):
         hard.extend(found_people)
 
     # =====================================================
     # SOFT WORDS
     # =====================================================
-
     soft_words = [
         "желательно",
         "если возможно",
         "по возможности",
         "хотелось бы"
     ]
-
     if any(w in text for w in soft_words):
         soft.extend(found_people)
 
     # =====================================================
     # AVOID
     # =====================================================
-
     avoid_words = [
         "не селить",
         "не вместе",
         "не хочу"
     ]
-
     if any(w in text for w in avoid_words):
         avoid.extend(found_people)
 
     # =====================================================
     # PRIORITY VARIANTS
     # =====================================================
-
     if (
         "если" in text
         and "3" in text
         and len(found_people) >= 2
     ):
-
         allocation_variants.append({
             "room_type": 3,
             "group": found_people,
             "priority": 1
         })
-
     if (
         "если" in text
         and "2" in text
         and len(found_people) >= 1
     ):
-
         allocation_variants.append({
             "room_type": 2,
             "group": [found_people[0]],
             "priority": 2
         })
 
+    # =====================================================
+    # НОВОЕ: предпочитаемый корпус
+    # =====================================================
+    preferred_building = detect_preferred_building(comment)
+
     return {
         "hard_group": list(set(hard)),
         "soft_group": list(set(soft)),
         "avoid_group": list(set(avoid)),
         "room_type": room_type,
-        "allocation_variants": allocation_variants
+        "allocation_variants": allocation_variants,
+        "preferred_building": preferred_building,  # 'red', 'yellow' или None
     }
 
 
@@ -305,7 +339,6 @@ def parse_comment(comment, fio_list):
 # MAIN PIPELINE
 # =========================================================
 def preprocess_guests(df):
-
     df = normalize_columns(df)
 
     processed = pd.DataFrame()
@@ -313,7 +346,6 @@ def preprocess_guests(df):
     # =====================================================
     # BASIC
     # =====================================================
-
     processed["fio"] = df["ФИО"]
 
     processed["resident"] = df.get(
@@ -339,13 +371,10 @@ def preprocess_guests(df):
     # =====================================================
     # NIGHTS
     # =====================================================
-
     processed["nights"] = df.apply(
         extract_nights,
         axis=1
     )
-
-    # нерезиденты не живут
     processed["nights"] = processed.apply(
         lambda row:
             []
@@ -357,15 +386,12 @@ def preprocess_guests(df):
     # =====================================================
     # COMMENTS
     # =====================================================
-
     fio_list = processed["fio"].tolist()
+    fio_full_list = fio_list  # для совместимости
 
     comment_col = None
-
     for c in df.columns:
-
         c_norm = norm(c)
-
         if "коммент" in c_norm:
             comment_col = c
             break
@@ -377,9 +403,29 @@ def preprocess_guests(df):
     else:
         comments = df[comment_col].fillna("")
 
-    parsed = comments.apply(
-        lambda c: parse_comment(c, fio_list)
-    )
+    # =====================================================
+    # НОВОЕ: определяем одноместный тариф для каждого
+    # =====================================================
+    single_tariff_flags = []
+    for idx, row in processed.iterrows():
+        single_tariff_flags.append(
+            parse_single_tariff(df.loc[[idx]], df)
+        )
+
+    # =====================================================
+    # Парсим комментарии с новыми параметрами
+    # =====================================================
+    parsed = []
+    for i, (comment, fio) in enumerate(zip(comments, processed["fio"])):
+        parsed.append(
+            parse_comment(
+                comment,
+                fio_list,
+                fio_full_list,
+                single_tariff_flag=single_tariff_flags[i],
+                person_fio=fio
+            )
+        )
 
     processed["group_hard"] = [
         x["hard_group"]
@@ -405,5 +451,22 @@ def preprocess_guests(df):
         x["allocation_variants"]
         for x in parsed
     ]
+
+    # НОВЫЕ ПОЛЯ
+    processed["preferred_building"] = [
+        x["preferred_building"]
+        for x in parsed
+    ]
+
+    # =====================================================
+    # НОВОЕ: добавляем флаг "нужно без подселений"
+    # =====================================================
+    processed["require_no_subleaser"] = processed["group_hard"].apply(
+        lambda x: "NO_SUBLEASE" in x
+    )
+
+    processed["must_be_single_room"] = processed["fio"].apply(
+        lambda x: x in SINGLE_ROOM_NAMES
+    )
 
     return processed
