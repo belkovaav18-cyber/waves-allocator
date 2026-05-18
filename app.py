@@ -168,15 +168,18 @@ def export_to_excel_with_styles(layout):
             floors = sorted(layout[building].keys(), key=int)
             
             for floor in floors:
-                sheet_name = f"{building_name}_этаж_{floor}"[:31]  # Excel ограничение 31 символ
+                sheet_name = f"{building_name}_этаж_{floor}"[:31]
                 
                 rooms = layout[building][floor]
                 sorted_rooms = sorted(rooms.items(), key=lambda x: int(re.sub(r'\D', '', x[0])))
                 
-                # Создаем DataFrame для этажа
+                # Создаем данные для DataFrame
                 data = []
                 row_data = []
                 max_rooms_in_row = 4
+                
+                # Сохраняем room_data для каждого room_id для последующей стилизации
+                rooms_info = {}
                 
                 for idx, (room_id, room_data) in enumerate(sorted_rooms):
                     guests_text = "\n".join(room_data['guests']) if room_data['guests'] else "—"
@@ -184,6 +187,7 @@ def export_to_excel_with_styles(layout):
                     cell_text = f"{room_id}\nМест: {room_data['capacity']}\nСвободно: {room_data['free_spots']}\n\nЗаселены:\n{guests_text}"
                     
                     row_data.append(cell_text)
+                    rooms_info[(idx // max_rooms_in_row, idx % max_rooms_in_row)] = room_data
                     
                     if len(row_data) == max_rooms_in_row:
                         data.append(row_data)
@@ -202,10 +206,10 @@ def export_to_excel_with_styles(layout):
                 workbook = writer.book
                 worksheet = writer.sheets[sheet_name]
                 
-                # Определяем цвета
-                green_fill = PatternFill(start_color="28a745", end_color="28a745", fill_type="solid")
-                yellow_fill = PatternFill(start_color="ffc107", end_color="ffc107", fill_type="solid")
-                red_fill = PatternFill(start_color="dc3545", end_color="dc3545", fill_type="solid")
+                # Определяем цвета в правильном формате (RRGGBB)
+                green_fill = PatternFill(start_color="28A745", end_color="28A745", fill_type="solid")
+                yellow_fill = PatternFill(start_color="FFC107", end_color="FFC107", fill_type="solid")
+                red_fill = PatternFill(start_color="DC3545", end_color="DC3545", fill_type="solid")
                 
                 # Стили
                 center_alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
@@ -221,38 +225,31 @@ def export_to_excel_with_styles(layout):
                     for col_idx, cell_value in enumerate(row, start=1):
                         cell = worksheet.cell(row=row_idx, column=col_idx)
                         
-                        # Определяем цвет по содержимому
-                        if cell_value:
-                            if "Свободно: 0" in cell_value:
+                        # Получаем room_data для этой ячейки
+                        room_key = (row_idx - 1, col_idx - 1)
+                        if room_key in rooms_info:
+                            room_data = rooms_info[room_key]
+                            
+                            if room_data['free_spots'] == 0:
                                 cell.fill = green_fill
-                                cell.font = Font(color="white", bold=True)
-                            elif "Свободно: 1" in cell_value or "Свободно: 2" in cell_value:
-                                if "Свободно: " in cell_value and "Свободно: 0" not in cell_value:
-                                    if room_data and room_data.get('capacity', 0) == int(re.search(r'Свободно: (\d+)', cell_value).group(1)) if re.search(r'Свободно: (\d+)', cell_value) else False:
-                                        cell.fill = red_fill
-                                        cell.font = Font(color="white", bold=True)
-                                    else:
-                                        cell.fill = yellow_fill
-                                        cell.font = Font(color="black", bold=True)
-                                else:
-                                    cell.fill = yellow_fill
-                                    cell.font = Font(color="black", bold=True)
+                                cell.font = Font(color="FFFFFF", bold=True)
+                            elif room_data['free_spots'] == room_data['capacity']:
+                                cell.fill = red_fill
+                                cell.font = Font(color="FFFFFF", bold=True)
                             else:
-                                # Если не удалось определить, проверяем по наличию гостей
-                                if "—" in cell_value:
-                                    cell.fill = red_fill
-                                    cell.font = Font(color="white", bold=True)
-                                else:
-                                    cell.fill = yellow_fill
-                                    cell.font = Font(color="black", bold=True)
+                                cell.fill = yellow_fill
+                                cell.font = Font(color="000000", bold=True)
                         else:
+                            # Пустая ячейка - красная
                             cell.fill = red_fill
+                            cell.font = Font(color="FFFFFF", bold=True)
                         
                         cell.alignment = center_alignment
                         cell.border = border
                         
                         # Настраиваем ширину колонок и высоту строк
-                        worksheet.column_dimensions[chr(64 + col_idx)].width = 25
+                        col_letter = chr(64 + col_idx) if col_idx <= 26 else chr(64 + (col_idx // 26)) + chr(64 + (col_idx % 26))
+                        worksheet.column_dimensions[col_letter].width = 30
                         worksheet.row_dimensions[row_idx].height = 120
     
     output.seek(0)
