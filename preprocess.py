@@ -161,13 +161,11 @@ SINGLE_ROOM_PEOPLE = [
     "Котова С.П. – Самарский филиал ФИАН",
 ]
 
-# Функция для извлечения фамилии (без организации)
 def extract_name_only(full_str):
     """Извлекает Фамилию И.О. из строки типа 'Макаров В.А. – МГУ'"""
     if " – " in full_str:
         return full_str.split(" – ")[0]
     return full_str
-
 
 SINGLE_ROOM_NAMES = [extract_name_only(p) for p in SINGLE_ROOM_PEOPLE]
 
@@ -180,149 +178,95 @@ def detect_preferred_building(comment):
     text = norm(comment)
     
     if "красный" in text or "1 корпус" in text:
-        return "red"  # комнаты с id 1-xxx
+        return "red"
     elif "желтый" in text or "2 корпус" in text:
-        return "yellow"  # комнаты с id 2-xxx
+        return "yellow"
     
     return None
 
 
 # =========================================================
-# SINGLE TARIFF (одноместный тариф)
+# SINGLE TARIFF (одноместный тариф) - ИСПРАВЛЕНА
 # =========================================================
-def parse_single_tariff(row, df_original):
+def parse_single_tariff(row, df_original, idx):
     """Проверяет, выбран ли одноместный тариф"""
-    # Ищем колонку с тарифом
     for col in df_original.columns:
-        if "тариф" in norm(col) or "проживание" in norm(col):
-            val = str(df_original.loc[row.name, col]).lower()
-            if "одномест" in val or "single" in val:
-                return True
+        col_norm = norm(col)
+        if "тариф" in col_norm or "проживание" in col_norm:
+            val = df_original.loc[idx, col]
+            if pd.notna(val):
+                val_str = str(val).lower()
+                if "одномест" in val_str or "single" in val_str:
+                    return True
     return False
 
 
 # =========================================================
 # COMMENT PARSER (расширенная версия)
 # =========================================================
-def parse_comment(comment, fio_list, fio_full_list, single_tariff_flag=False, person_fio=None):
+def parse_comment(comment, fio_list, single_tariff_flag=False, person_fio=None):
     text = norm(comment)
 
     hard = []
     soft = []
     avoid = []
-
     allocation_variants = []
-
     room_type = None
 
-    # =====================================================
     # ROOM TYPE (старая логика)
-    # =====================================================
-
-    if (
-        "одномест" in text
-        or "без подсел" in text
-    ):
+    if "одномест" in text or "без подсел" in text:
         room_type = 1
-    elif (
-        "двухмест" in text
-        or "двух-мест" in text
-        or "двуспаль" in text
-    ):
+    elif "двухмест" in text or "двух-мест" in text or "двуспаль" in text:
         room_type = 2
-    elif (
-        "трехмест" in text
-        or "трёхмест" in text
-    ):
+    elif "трехмест" in text or "трёхмест" in text:
         room_type = 3
 
-    # =====================================================
     # НОВОЕ: одноместный тариф → нужно селить в двушки без подселений
-    # =====================================================
     if single_tariff_flag:
-        room_type = 2  # двушка
-        # Добавляем флаг, что нельзя подселять
+        room_type = 2
         hard.append("NO_SUBLEASE")
 
-    # =====================================================
     # НОВОЕ: спецсписок → только однушки
-    # =====================================================
-    if person_fio in SINGLE_ROOM_NAMES:
-        room_type = 1  # однушка
+    if person_fio and person_fio in SINGLE_ROOM_NAMES:
+        room_type = 1
         hard.append("MUST_BE_SINGLE")
 
-    # =====================================================
     # PEOPLE
-    # =====================================================
     found_people = extract_people(text, fio_list)
 
-    # =====================================================
     # TOGETHER WORDS
-    # =====================================================
     together_words = [
-        "вместе",
-        "совместно",
-        "поселить с",
-        "проживание с",
-        "заселить с",
-        "с подселением",
-        "с женой",
-        "с мужем",
-        "с супруг",
+        "вместе", "совместно", "поселить с", "проживание с",
+        "заселить с", "с подселением", "с женой", "с мужем", "с супруг",
     ]
     if any(w in text for w in together_words):
         hard.extend(found_people)
 
-    # =====================================================
     # SOFT WORDS
-    # =====================================================
-    soft_words = [
-        "желательно",
-        "если возможно",
-        "по возможности",
-        "хотелось бы"
-    ]
+    soft_words = ["желательно", "если возможно", "по возможности", "хотелось бы"]
     if any(w in text for w in soft_words):
         soft.extend(found_people)
 
-    # =====================================================
     # AVOID
-    # =====================================================
-    avoid_words = [
-        "не селить",
-        "не вместе",
-        "не хочу"
-    ]
+    avoid_words = ["не селить", "не вместе", "не хочу"]
     if any(w in text for w in avoid_words):
         avoid.extend(found_people)
 
-    # =====================================================
     # PRIORITY VARIANTS
-    # =====================================================
-    if (
-        "если" in text
-        and "3" in text
-        and len(found_people) >= 2
-    ):
+    if "если" in text and "3" in text and len(found_people) >= 2:
         allocation_variants.append({
             "room_type": 3,
             "group": found_people,
             "priority": 1
         })
-    if (
-        "если" in text
-        and "2" in text
-        and len(found_people) >= 1
-    ):
+    if "если" in text and "2" in text and len(found_people) >= 1:
         allocation_variants.append({
             "room_type": 2,
             "group": [found_people[0]],
             "priority": 2
         })
 
-    # =====================================================
     # НОВОЕ: предпочитаемый корпус
-    # =====================================================
     preferred_building = detect_preferred_building(comment)
 
     return {
@@ -331,7 +275,7 @@ def parse_comment(comment, fio_list, fio_full_list, single_tariff_flag=False, pe
         "avoid_group": list(set(avoid)),
         "room_type": room_type,
         "allocation_variants": allocation_variants,
-        "preferred_building": preferred_building,  # 'red', 'yellow' или None
+        "preferred_building": preferred_building,
     }
 
 
@@ -347,39 +291,23 @@ def preprocess_guests(df):
     # BASIC
     # =====================================================
     processed["fio"] = df["ФИО"]
-
+    
     processed["resident"] = df.get(
         "Выбор тарифа за проживание",
         ""
     ).apply(parse_resident)
 
-    processed["gender"] = (
-        processed["fio"]
-        .apply(detect_gender)
-    )
+    processed["gender"] = processed["fio"].apply(detect_gender)
 
-    processed["city"] = df.get(
-        "Город",
-        "UNKNOWN"
-    )
-
-    processed["status"] = df.get(
-        "Статус",
-        "student"
-    )
+    processed["city"] = df.get("Город", "UNKNOWN")
+    processed["status"] = df.get("Статус", "student")
 
     # =====================================================
     # NIGHTS
     # =====================================================
-    processed["nights"] = df.apply(
-        extract_nights,
-        axis=1
-    )
+    processed["nights"] = df.apply(extract_nights, axis=1)
     processed["nights"] = processed.apply(
-        lambda row:
-            []
-            if not row["resident"]
-            else row["nights"],
+        lambda row: [] if not row["resident"] else row["nights"],
         axis=1
     )
 
@@ -387,7 +315,6 @@ def preprocess_guests(df):
     # COMMENTS
     # =====================================================
     fio_list = processed["fio"].tolist()
-    fio_full_list = fio_list  # для совместимости
 
     comment_col = None
     for c in df.columns:
@@ -397,23 +324,20 @@ def preprocess_guests(df):
             break
 
     if comment_col is None:
-        comments = pd.Series(
-            [""] * len(processed)
-        )
+        comments = pd.Series([""] * len(processed))
     else:
         comments = df[comment_col].fillna("")
 
     # =====================================================
-    # НОВОЕ: определяем одноместный тариф для каждого
+    # Определяем одноместный тариф для каждого (ИСПРАВЛЕНО)
     # =====================================================
     single_tariff_flags = []
-    for idx, row in processed.iterrows():
-        single_tariff_flags.append(
-            parse_single_tariff(df.loc[[idx]], df)
-        )
+    for idx in df.index:
+        flag = parse_single_tariff(df.loc[idx], df, idx)
+        single_tariff_flags.append(flag)
 
     # =====================================================
-    # Парсим комментарии с новыми параметрами
+    # Парсим комментарии
     # =====================================================
     parsed = []
     for i, (comment, fio) in enumerate(zip(comments, processed["fio"])):
@@ -421,50 +345,24 @@ def preprocess_guests(df):
             parse_comment(
                 comment,
                 fio_list,
-                fio_full_list,
                 single_tariff_flag=single_tariff_flags[i],
                 person_fio=fio
             )
         )
 
-    processed["group_hard"] = [
-        x["hard_group"]
-        for x in parsed
-    ]
-
-    processed["group_soft"] = [
-        x["soft_group"]
-        for x in parsed
-    ]
-
-    processed["group_avoid"] = [
-        x["avoid_group"]
-        for x in parsed
-    ]
-
-    processed["room_type"] = [
-        x["room_type"]
-        for x in parsed
-    ]
-
-    processed["allocation_variants"] = [
-        x["allocation_variants"]
-        for x in parsed
-    ]
-
-    # НОВЫЕ ПОЛЯ
-    processed["preferred_building"] = [
-        x["preferred_building"]
-        for x in parsed
-    ]
+    processed["group_hard"] = [x["hard_group"] for x in parsed]
+    processed["group_soft"] = [x["soft_group"] for x in parsed]
+    processed["group_avoid"] = [x["avoid_group"] for x in parsed]
+    processed["room_type"] = [x["room_type"] for x in parsed]
+    processed["allocation_variants"] = [x["allocation_variants"] for x in parsed]
+    processed["preferred_building"] = [x["preferred_building"] for x in parsed]
 
     # =====================================================
-    # НОВОЕ: добавляем флаг "нужно без подселений"
+    # Дополнительные флаги
     # =====================================================
     processed["require_no_subleaser"] = processed["group_hard"].apply(
         lambda x: "NO_SUBLEASE" in x
     )
-
     processed["must_be_single_room"] = processed["fio"].apply(
         lambda x: x in SINGLE_ROOM_NAMES
     )
