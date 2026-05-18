@@ -169,7 +169,7 @@ def create_floor_layout(allocation_df, rooms_df):
 # =========================================================
 
 def create_floor_pdf_bytes(layout, building, floor):
-    """Создает PDF для одного этажа и возвращает байты"""
+    """Создает PDF для одного этажа и возвращает байты с поддержкой кириллицы"""
     buffer = io.BytesIO()
     
     doc = SimpleDocTemplate(
@@ -181,15 +181,58 @@ def create_floor_pdf_bytes(layout, building, floor):
         bottomMargin=1*cm
     )
     
+    # Пытаемся зарегистрировать шрифт с поддержкой кириллицы
+    try:
+        # Вариант 1: DejaVu Sans (часто есть в Linux)
+        pdfmetrics.registerFont(TTFont('DejaVu', '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'))
+        font_name = 'DejaVu'
+    except:
+        try:
+            # Вариант 2: Liberation Sans
+            pdfmetrics.registerFont(TTFont('Liberation', '/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf'))
+            font_name = 'Liberation'
+        except:
+            try:
+                # Вариант 3: Arial (Windows/Mac)
+                pdfmetrics.registerFont(TTFont('Arial', '/usr/share/fonts/truetype/msttcorefonts/Arial.ttf'))
+                font_name = 'Arial'
+            except:
+                # Если ничего не подошло, используем стандартный шрифт с обходным путем
+                font_name = 'Helvetica'
+    
+    # Создаем стили с поддержкой кириллицы
     styles = getSampleStyleSheet()
     
-    # Используем стандартный шрифт Helvetica (поддерживает латиницу)
-    # для кириллицы используем стандартные стили
+    if font_name != 'Helvetica':
+        # Создаем копии стилей с русским шрифтом
+        for style_name in styles.byName:
+            style = styles[style_name]
+            styles[style_name] = ParagraphStyle(
+                name=style_name,
+                parent=style,
+                fontName=font_name
+            )
+    
+    # Создаем дополнительные стили
+    styles.add(ParagraphStyle(
+        name='RussianTitle',
+        parent=styles['Heading1'],
+        fontName=font_name,
+        fontSize=16,
+        alignment=1
+    ))
+    styles.add(ParagraphStyle(
+        name='RussianNormal',
+        parent=styles['Normal'],
+        fontName=font_name,
+        fontSize=10
+    ))
+    
     story = []
     
     # Заголовок
     building_name = "Красный корпус" if building == "1" else ("Желтый корпус" if building == "2" else f"Корпус {building}")
-    title = Paragraph(f"{building_name} - Этаж {floor}", styles['Heading1'])
+    title = Paragraph(f"{building_name} - Этаж {floor}", styles['RussianTitle'])
     story.append(title)
     story.append(Spacer(1, 0.5*cm))
     
@@ -202,18 +245,21 @@ def create_floor_pdf_bytes(layout, building, floor):
     row = []
     
     for idx, (room_id, room_data) in enumerate(sorted_rooms):
+        # Формируем содержимое ячейки с корректным отображением
         guests_text = "\n".join(room_data['guests']) if room_data['guests'] else "—"
         
-        cell_content = f"""
-        <b>{room_id}</b><br/>
-        Мест: {room_data['capacity']}<br/>
-        Свободно: {room_data['free_spots']}<br/>
-        <br/>
-        <b>Заселены:</b><br/>
-        {guests_text}
-        """
+        # Используем простой текст вместо HTML-тегов для совместимости
+        cell_lines = [
+            f"<b>{room_id}</b>",
+            f"Мест: {room_data['capacity']}",
+            f"Свободно: {room_data['free_spots']}",
+            "",
+            "<b>Заселены:</b>",
+            guests_text
+        ]
         
-        row.append(Paragraph(cell_content, styles['Normal']))
+        cell_html = "<br/>".join(cell_lines)
+        row.append(Paragraph(cell_html, styles['RussianNormal']))
         
         if len(row) == 4:
             table_data.append(row)
@@ -221,9 +267,10 @@ def create_floor_pdf_bytes(layout, building, floor):
     
     if row:
         while len(row) < 4:
-            row.append(Paragraph("", styles['Normal']))
+            row.append(Paragraph("", styles['RussianNormal']))
         table_data.append(row)
     
+    # Настраиваем таблицу
     table = Table(table_data, colWidths=[6*cm, 6*cm, 6*cm, 6*cm])
     table.setStyle(TableStyle([
         ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
@@ -237,7 +284,7 @@ def create_floor_pdf_bytes(layout, building, floor):
     story.append(Spacer(1, 1*cm))
     story.append(Paragraph(
         f"Дата генерации: {datetime.now().strftime('%d.%m.%Y %H:%M')}",
-        styles['Normal']
+        styles['RussianNormal']
     ))
     
     doc.build(story)
@@ -519,3 +566,4 @@ if st.session_state.final_result_df is not None:
         st.session_state.pdf_ready = False
         st.session_state.layout = None
         st.rerun()
+
