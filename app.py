@@ -12,6 +12,7 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 import tempfile
 import os
+import base64
 
 from sheets import load_guests, save_results_with_details
 from preprocess import preprocess_guests
@@ -22,6 +23,16 @@ SHEET_ID = "1lF4SV24wTo5OwsidQ7UPqBVaGzdw_fBSx0OuBJJ4cWg"
 TAB = "Sheet"
 
 st.title("🏨 Расселение")
+
+# Инициализация session state
+if 'pdf_files' not in st.session_state:
+    st.session_state.pdf_files = {}
+if 'pdf_ready' not in st.session_state:
+    st.session_state.pdf_ready = False
+if 'layout' not in st.session_state:
+    st.session_state.layout = None
+if 'final_result_df' not in st.session_state:
+    st.session_state.final_result_df = None
 
 rooms_df = pd.read_excel("data/rooms.xlsx")
 rooms = rooms_df.to_dict("records")
@@ -34,10 +45,6 @@ guests_df = preprocess_guests(raw)
 # ФУНКЦИИ ДЛЯ РАСЧЕТА ДАТ
 # =========================================================
 def extract_dates_from_guest(guest_fio, raw_df):
-    """
-    Извлекает даты заезда и отъезда для конкретного гостя по ФИО.
-    Возвращает (дата_заезда, дата_отъезда) в формате строки.
-    """
     month_map = {
         "мая": 5, "июня": 6, "июля": 7, "августа": 8,
         "сентября": 9, "октября": 10, "ноября": 11, "декабря": 12,
@@ -105,7 +112,6 @@ def extract_dates_from_guest(guest_fio, raw_df):
 # =========================================================
 
 def get_building_and_floor(room_id):
-    """Извлекает корпус и этаж из ID комнаты."""
     room_str = str(room_id)
     if '-' in room_str:
         parts = room_str.split('-')
@@ -119,7 +125,6 @@ def get_building_and_floor(room_id):
 
 
 def create_floor_layout(allocation_df, rooms_df):
-    """Создает словарь с планом этажей."""
     allocation_dict = {}
     for _, row in allocation_df.iterrows():
         room_id = row.get('room_id')
@@ -160,22 +165,15 @@ def create_floor_layout(allocation_df, rooms_df):
 
 
 # =========================================================
-# ФУНКЦИИ ДЛЯ ЭКСПОРТА В PDF
+# ФУНКЦИИ ДЛЯ ЭКСПОРТА В PDF (ВОЗВРАЩАЮТ БАЙТЫ)
 # =========================================================
 
-def create_floor_pdf(layout, building, floor, output_filename):
-    """
-    Создает PDF-файл для одного этажа одного корпуса.
-    """
-    # Регистрируем русский шрифт
-    try:
-        pdfmetrics.registerFont(TTFont('DejaVu', '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'))
-        font_name = 'DejaVu'
-    except:
-        font_name = 'Helvetica'
+def create_floor_pdf_bytes(layout, building, floor):
+    """Создает PDF для одного этажа и возвращает байты"""
+    buffer = io.BytesIO()
     
     doc = SimpleDocTemplate(
-        output_filename,
+        buffer,
         pagesize=landscape(A4),
         rightMargin=1*cm,
         leftMargin=1*cm,
@@ -184,96 +182,71 @@ def create_floor_pdf(layout, building, floor, output_filename):
     )
     
     styles = getSampleStyleSheet()
-    styles.add(ParagraphStyle(
-        name='RussianStyle',
-        parent=styles['Normal'],
-        fontName=font_name,
-        fontSize=10
-    ))
-    styles.add(ParagraphStyle(
-        name='TitleStyle',
-        parent=styles['Heading1'],
-        fontName=font_name,
-        fontSize=16,
-        alignment=1  # Center
-    ))
-    styles.add(ParagraphStyle(
-        name='FloorStyle',
-        parent=styles['Heading2'],
-        fontName=font_name,
-        fontSize=14,
-        alignment=1
-    ))
     
+    # Используем стандартный шрифт Helvetica (поддерживает латиницу)
+    # для кириллицы используем стандартные стили
     story = []
     
     # Заголовок
     building_name = "Красный корпус" if building == "1" else ("Желтый корпус" if building == "2" else f"Корпус {building}")
-    title = Paragraph(f"{building_name} - Этаж {floor}", styles['TitleStyle'])
+    title = Paragraph(f"{building_name} - Этаж {floor}", styles['Heading1'])
     story.append(title)
     story.append(Spacer(1, 0.5*cm))
     
-    # Получаем комнаты на этаже
+    # Получаем комнаты
     rooms = layout[building][floor]
     sorted_rooms = sorted(rooms.items(), key=lambda x: int(re.sub(r'\D', '', x[0])))
     
-    # Создаем таблицу (4 колонки для комнат)
+    # Создаем таблицу
     table_data = []
     row = []
     
     for idx, (room_id, room_data) in enumerate(sorted_rooms):
-        # Формируем содержимое ячейки
         guests_text = "\n".join(room_data['guests']) if room_data['guests'] else "—"
         
         cell_content = f"""
         <b>{room_id}</b><br/>
-        🛏️ {room_data['capacity']} мест<br/>
-        🟢 Свободно: {room_data['free_spots']}<br/>
+        Мест: {room_data['capacity']}<br/>
+        Свободно: {room_data['free_spots']}<br/>
         <br/>
         <b>Заселены:</b><br/>
         {guests_text}
         """
         
-        row.append(Paragraph(cell_content, styles['RussianStyle']))
+        row.append(Paragraph(cell_content, styles['Normal']))
         
         if len(row) == 4:
             table_data.append(row)
             row = []
     
-    # Добавляем последний ряд
     if row:
         while len(row) < 4:
-            row.append(Paragraph("", styles['RussianStyle']))
+            row.append(Paragraph("", styles['Normal']))
         table_data.append(row)
     
-    # Создаем таблицу
     table = Table(table_data, colWidths=[6*cm, 6*cm, 6*cm, 6*cm])
     table.setStyle(TableStyle([
         ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
         ('VALIGN', (0, 0), (-1, -1), 'TOP'),
         ('BOX', (0, 0), (-1, -1), 1, colors.black),
         ('GRID', (0, 0), (-1, -1), 1, colors.grey),
-        ('BACKGROUND', (0, 0), (-1, -1), colors.white),
         ('PADDING', (0, 0), (-1, -1), 6),
     ]))
     
     story.append(table)
-    
-    # Дата генерации
     story.append(Spacer(1, 1*cm))
     story.append(Paragraph(
         f"Дата генерации: {datetime.now().strftime('%d.%m.%Y %H:%M')}",
-        styles['RussianStyle']
+        styles['Normal']
     ))
     
     doc.build(story)
+    buffer.seek(0)
+    return buffer.getvalue()
 
 
-def export_all_floors_to_pdf(layout):
-    """
-    Экспортирует все этажи всех корпусов в отдельные PDF-файлы.
-    Возвращает словарь {название_файла: путь_к_файлу}
-    """
+def prepare_pdfs(layout):
+    """Готовит все PDF и сохраняет в session_state"""
     pdf_files = {}
     
     for building in layout:
@@ -283,17 +256,14 @@ def export_all_floors_to_pdf(layout):
         building_name = "red" if building == "1" else "yellow" if building == "2" else building
         
         for floor in layout[building]:
-            filename = f"floor_{building_name}_{floor}.pdf"
-            
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp:
-                create_floor_pdf(layout, building, floor, tmp.name)
-                pdf_files[f"Корпус {building_name} Этаж {floor}"] = tmp.name
+            pdf_bytes = create_floor_pdf_bytes(layout, building, floor)
+            display_name = f"Корпус {building_name} Этаж {floor}"
+            pdf_files[display_name] = pdf_bytes
     
     return pdf_files
 
 
 def render_floor_plan(layout, selected_building=None):
-    """Отрисовывает план этажей с помощью HTML/CSS"""
     if selected_building:
         buildings = [selected_building]
     else:
@@ -365,6 +335,33 @@ def render_floor_plan(layout, selected_building=None):
             st.markdown("---")
 
 
+def render_simple_floor_plan(layout):
+    for building in layout:
+        building_name = "Красный" if building == "1" else ("Желтый" if building == "2" else building)
+        st.markdown(f"## Корпус {building_name}")
+        
+        floors = sorted(layout[building].keys(), key=int)
+        
+        for floor in floors:
+            st.markdown(f"### Этаж {floor}")
+            
+            rooms = layout[building][floor]
+            sorted_rooms = sorted(rooms.items(), key=lambda x: int(re.sub(r'\D', '', x[0])))
+            
+            table_data = []
+            for room_id, room_data in sorted_rooms:
+                guests_text = ", ".join(room_data['guests']) if room_data['guests'] else "—"
+                table_data.append({
+                    "Комната": room_id,
+                    "Мест": room_data['capacity'],
+                    "Свободно": room_data['free_spots'],
+                    "Заселены": guests_text
+                })
+            
+            df_rooms = pd.DataFrame(table_data)
+            st.dataframe(df_rooms, use_container_width=True)
+
+
 # =========================================================
 # ОСНОВНОЙ КОД
 # =========================================================
@@ -375,6 +372,7 @@ residents = guests_df[guests_df["resident"] == True].copy()
 st.subheader("Гости")
 st.dataframe(guests_df)
 
+# Кнопка расселения - сохраняем результат в session_state
 if st.button("🚀 Расселить"):
 
     with st.spinner("Идет расселение..."):
@@ -408,106 +406,17 @@ if st.button("🚀 Расселить"):
     
     # Объединяем
     final_result = pd.concat([result_df, non_residents_df], ignore_index=True)
+    st.session_state.final_result_df = final_result
     
-    # =========================================================
-    # ВИЗУАЛИЗАЦИЯ ПЛАНА ЭТАЖЕЙ
-    # =========================================================
-    st.subheader("🏠 План этажей с расселением")
-    
+    # Создаем layout
     allocated_guests = final_result[final_result["room_id"] != "не проживает"]
-    
     if len(allocated_guests) > 0 and len(rooms_df) > 0:
-        layout = create_floor_layout(allocated_guests, rooms_df)
-        
-        if layout:
-            # Выбор корпуса
-            building_filter = st.radio(
-                "Выберите корпус:",
-                options=["Все", "Красный (1)", "Желтый (2)"],
-                horizontal=True
-            )
-            
-            if building_filter == "Красный (1)":
-                selected_building = "1"
-            elif building_filter == "Желтый (2)":
-                selected_building = "2"
-            else:
-                selected_building = None
-            
-            # Выбор стиля
-            view_style = st.radio(
-                "Стиль отображения:",
-                options=["Карточки", "Таблица"],
-                horizontal=True
-            )
-            
-            if view_style == "Карточки":
-                render_floor_plan(layout, selected_building)
-            else:
-                if selected_building:
-                    if selected_building in layout:
-                        filtered_layout = {selected_building: layout[selected_building]}
-                        render_simple_floor_plan(filtered_layout)
-                    else:
-                        st.warning(f"Корпус {selected_building} не найден")
-                else:
-                    render_simple_floor_plan(layout)
-            
-            # =========================================================
-            # ЭКСПОРТ В PDF
-            # =========================================================
-            st.markdown("---")
-            st.subheader("📄 Экспорт в PDF")
-            
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                if st.button("📑 Экспорт всех этажей в PDF", type="primary"):
-                    with st.spinner("Создание PDF-файлов..."):
-                        try:
-                            pdf_files = export_all_floors_to_pdf(layout)
-                            
-                            if pdf_files:
-                                st.success(f"Создано {len(pdf_files)} PDF-файлов!")
-                                
-                                # Показываем кнопки скачивания для каждого файла
-                                for name, filepath in pdf_files.items():
-                                    with open(filepath, 'rb') as f:
-                                        pdf_data = f.read()
-                                    
-                                    st.download_button(
-                                        label=f"📥 Скачать {name}",
-                                        data=pdf_data,
-                                        file_name=f"{name.replace(' ', '_')}.pdf",
-                                        mime="application/pdf",
-                                        key=f"download_{name}"
-                                    )
-                                    
-                                    # Удаляем временный файл
-                                    os.unlink(filepath)
-                            else:
-                                st.warning("Нет этажей для экспорта")
-                        except Exception as e:
-                            st.error(f"Ошибка при создании PDF: {str(e)}")
-            
-            with col2:
-                st.info("💡 Будет создан отдельный PDF-файл для каждого этажа каждого корпуса")
-        else:
-            st.info("Нет данных для отображения плана этажей")
-    else:
-        st.info("Нет данных о расселении для отображения")
-    
-    # =========================================================
-    # ТАБЛИЦА С РЕЗУЛЬТАТАМИ
-    # =========================================================
-    st.subheader("📋 Таблица расселения")
-    display_columns = ['fio', 'room_id', 'room_capacity', 'Дата заезда', 'Дата отъезда']
-    existing_display = [col for col in display_columns if col in final_result.columns]
-    st.dataframe(final_result[existing_display], use_container_width=True)
-    
-    # Debug
-    with st.expander("🔧 Debug информация"):
-        st.json(debug)
+        st.session_state.layout = create_floor_layout(allocated_guests, rooms_df)
+        # Готовим PDF заранее
+        if st.session_state.layout:
+            with st.spinner("Подготовка PDF-файлов..."):
+                st.session_state.pdf_files = prepare_pdfs(st.session_state.layout)
+                st.session_state.pdf_ready = True
     
     # Сохраняем
     save_results_with_details(
@@ -518,3 +427,95 @@ if st.button("🚀 Расселить"):
     )
     
     st.success("✅ Готово! Результат сохранен в Google Sheets")
+    st.rerun()
+
+
+# =========================================================
+# ОТОБРАЖЕНИЕ РЕЗУЛЬТАТОВ (если есть в session_state)
+# =========================================================
+
+if st.session_state.final_result_df is not None:
+    
+    # =========================================================
+    # ВИЗУАЛИЗАЦИЯ ПЛАНА ЭТАЖЕЙ
+    # =========================================================
+    st.subheader("🏠 План этажей с расселением")
+    
+    if st.session_state.layout:
+        # Выбор корпуса
+        building_filter = st.radio(
+            "Выберите корпус:",
+            options=["Все", "Красный (1)", "Желтый (2)"],
+            horizontal=True,
+            key="building_filter"
+        )
+        
+        if building_filter == "Красный (1)":
+            selected_building = "1"
+        elif building_filter == "Желтый (2)":
+            selected_building = "2"
+        else:
+            selected_building = None
+        
+        # Выбор стиля
+        view_style = st.radio(
+            "Стиль отображения:",
+            options=["Карточки", "Таблица"],
+            horizontal=True,
+            key="view_style"
+        )
+        
+        if view_style == "Карточки":
+            render_floor_plan(st.session_state.layout, selected_building)
+        else:
+            if selected_building:
+                if selected_building in st.session_state.layout:
+                    filtered_layout = {selected_building: st.session_state.layout[selected_building]}
+                    render_simple_floor_plan(filtered_layout)
+                else:
+                    st.warning(f"Корпус {selected_building} не найден")
+            else:
+                render_simple_floor_plan(st.session_state.layout)
+        
+        # =========================================================
+        # ЭКСПОРТ В PDF
+        # =========================================================
+        st.markdown("---")
+        st.subheader("📄 Экспорт в PDF")
+        
+        if st.session_state.pdf_ready and st.session_state.pdf_files:
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.info(f"✅ Готово {len(st.session_state.pdf_files)} PDF-файлов")
+            
+            with col2:
+                st.write("")
+            
+            # Отображаем кнопки скачивания для каждого файла
+            for name, pdf_bytes in st.session_state.pdf_files.items():
+                st.download_button(
+                    label=f"📥 Скачать {name}",
+                    data=pdf_bytes,
+                    file_name=f"{name.replace(' ', '_')}.pdf",
+                    mime="application/pdf",
+                    key=f"download_{name}"
+                )
+        else:
+            st.warning("PDF-файлы не подготовлены")
+    
+    # =========================================================
+    # ТАБЛИЦА С РЕЗУЛЬТАТАМИ
+    # =========================================================
+    st.subheader("📋 Таблица расселения")
+    display_columns = ['fio', 'room_id', 'room_capacity', 'Дата заезда', 'Дата отъезда']
+    existing_display = [col for col in display_columns if col in st.session_state.final_result_df.columns]
+    st.dataframe(st.session_state.final_result_df[existing_display], use_container_width=True)
+    
+    # Кнопка для сброса и нового расселения
+    if st.button("🔄 Новое расселение"):
+        st.session_state.final_result_df = None
+        st.session_state.pdf_files = {}
+        st.session_state.pdf_ready = False
+        st.session_state.layout = None
+        st.rerun()
