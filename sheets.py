@@ -37,31 +37,51 @@ def save_results(sheet_id, tab_name, df: pd.DataFrame):
 
 def save_results_with_details(sheet_id, tab_name, results_df, original_guests_df):
     """
-    Сохраняет результаты расселения вместе с тарифом, комментарием и датами.
+    Сохраняет результаты расселения вместе с тарифом, комментарием.
     """
     client = connect()
     sh = client.open_by_key(sheet_id)
     
     df_to_save = results_df.copy()
     
-    # Определяем колонку с ФИО
+    # Определяем колонку с ФИО (может быть 'fio' или 'ФИО')
     fio_col = 'fio' if 'fio' in df_to_save.columns else 'ФИО'
     
-    # Создаем словари для быстрого поиска
+    # Создаем словари для быстрого поиска тарифа и комментария по ФИО
     tariff_dict = {}
     comment_dict = {}
     
     for idx, row in original_guests_df.iterrows():
         fio = row.get('ФИО', '')
         if fio:
-            tariff_dict[fio] = row.get('Выбор тарифа за проживание', '')
-            comment_dict[fio] = row.get('Комментарий (например, пожелания по расселению)', '')
+            # Ищем колонку с тарифом
+            tariff_value = ''
+            for col in original_guests_df.columns:
+                if 'тариф' in str(col).lower() or 'проживание' in str(col).lower():
+                    tariff_value = row.get(col, '')
+                    break
+            
+            # Ищем колонку с комментарием
+            comment_value = ''
+            for col in original_guests_df.columns:
+                if 'коммент' in str(col).lower():
+                    comment_value = row.get(col, '')
+                    break
+            
+            tariff_dict[fio] = tariff_value
+            comment_dict[fio] = comment_value
     
-    # Добавляем колонки
-    df_to_save['Выбор тарифа за проживание'] = df_to_save[fio_col].map(tariff_dict).fillna('')
+    # Добавляем колонки с тарифом и комментарием
+    df_to_save['Тариф'] = df_to_save[fio_col].map(tariff_dict).fillna('')
     df_to_save['Комментарий'] = df_to_save[fio_col].map(comment_dict).fillna('')
     
-    # Сохраняем
+    # Переставляем колонки в удобном порядке (опционально)
+    columns_order = ['fio', 'room_id', 'room_capacity', 'Дата заезда', 'Дата отъезда', 'Тариф', 'Комментарий']
+    existing_columns = [col for col in columns_order if col in df_to_save.columns]
+    other_columns = [col for col in df_to_save.columns if col not in existing_columns]
+    df_to_save = df_to_save[existing_columns + other_columns]
+    
+    # Сохраняем в Google Sheets
     try:
         sheet = sh.worksheet(tab_name)
     except:
@@ -71,3 +91,5 @@ def save_results_with_details(sheet_id, tab_name, results_df, original_guests_df
     df_to_save = df_to_save.fillna("").astype(str)
     data = [df_to_save.columns.tolist()] + df_to_save.values.tolist()
     sheet.update(data)
+    
+    return df_to_save
