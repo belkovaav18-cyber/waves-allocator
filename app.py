@@ -3,16 +3,9 @@ import pandas as pd
 from datetime import datetime
 import re
 import io
-from reportlab.lib import colors
-from reportlab.lib.pagesizes import A4, landscape
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib.units import cm
-from reportlab.pdfbase import pdfmetrics
-from reportlab.pdfbase.ttfonts import TTFont
-import tempfile
-import os
-import base64
+from openpyxl import load_workbook
+from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
+from openpyxl.utils.dataframe import dataframe_to_rows
 
 from sheets import load_guests, save_results_with_details
 from preprocess import preprocess_guests
@@ -25,10 +18,6 @@ TAB = "Sheet"
 st.title("🏨 Расселение")
 
 # Инициализация session state
-if 'pdf_files' not in st.session_state:
-    st.session_state.pdf_files = {}
-if 'pdf_ready' not in st.session_state:
-    st.session_state.pdf_ready = False
 if 'layout' not in st.session_state:
     st.session_state.layout = None
 if 'final_result_df' not in st.session_state:
@@ -164,150 +153,110 @@ def create_floor_layout(allocation_df, rooms_df):
     return layout
 
 
-# =========================================================
-# ФУНКЦИИ ДЛЯ ЭКСПОРТА В PDF (ВОЗВРАЩАЮТ БАЙТЫ)
-# =========================================================
-
-def create_floor_pdf_bytes(layout, building, floor):
-    """Создает PDF для одного этажа и возвращает байты с поддержкой кириллицы"""
-    buffer = io.BytesIO()
+def export_to_excel_with_styles(layout):
+    """Экспортирует план этажей в Excel с цветами ячеек"""
+    output = io.BytesIO()
     
-    doc = SimpleDocTemplate(
-        buffer,
-        pagesize=landscape(A4),
-        rightMargin=1*cm,
-        leftMargin=1*cm,
-        topMargin=1*cm,
-        bottomMargin=1*cm
-    )
+    # Создаем Excel файл
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        for building in layout:
+            if building == 'unknown':
+                continue
+            
+            building_name = "Красный_корпус" if building == "1" else "Желтый_корпус" if building == "2" else f"Корпус_{building}"
+            
+            floors = sorted(layout[building].keys(), key=int)
+            
+            for floor in floors:
+                sheet_name = f"{building_name}_этаж_{floor}"[:31]  # Excel ограничение 31 символ
+                
+                rooms = layout[building][floor]
+                sorted_rooms = sorted(rooms.items(), key=lambda x: int(re.sub(r'\D', '', x[0])))
+                
+                # Создаем DataFrame для этажа
+                data = []
+                row_data = []
+                max_rooms_in_row = 4
+                
+                for idx, (room_id, room_data) in enumerate(sorted_rooms):
+                    guests_text = "\n".join(room_data['guests']) if room_data['guests'] else "—"
+                    
+                    cell_text = f"{room_id}\nМест: {room_data['capacity']}\nСвободно: {room_data['free_spots']}\n\nЗаселены:\n{guests_text}"
+                    
+                    row_data.append(cell_text)
+                    
+                    if len(row_data) == max_rooms_in_row:
+                        data.append(row_data)
+                        row_data = []
+                
+                if row_data:
+                    while len(row_data) < max_rooms_in_row:
+                        row_data.append("")
+                    data.append(row_data)
+                
+                # Создаем DataFrame
+                df = pd.DataFrame(data)
+                df.to_excel(writer, sheet_name=sheet_name, index=False, header=False)
+                
+                # Получаем лист для стилизации
+                workbook = writer.book
+                worksheet = writer.sheets[sheet_name]
+                
+                # Определяем цвета
+                green_fill = PatternFill(start_color="28a745", end_color="28a745", fill_type="solid")
+                yellow_fill = PatternFill(start_color="ffc107", end_color="ffc107", fill_type="solid")
+                red_fill = PatternFill(start_color="dc3545", end_color="dc3545", fill_type="solid")
+                
+                # Стили
+                center_alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+                border = Border(
+                    left=Side(style='thin'),
+                    right=Side(style='thin'),
+                    top=Side(style='thin'),
+                    bottom=Side(style='thin')
+                )
+                
+                # Применяем стили к ячейкам
+                for row_idx, row in enumerate(data, start=1):
+                    for col_idx, cell_value in enumerate(row, start=1):
+                        cell = worksheet.cell(row=row_idx, column=col_idx)
+                        
+                        # Определяем цвет по содержимому
+                        if cell_value:
+                            if "Свободно: 0" in cell_value:
+                                cell.fill = green_fill
+                                cell.font = Font(color="white", bold=True)
+                            elif "Свободно: 1" in cell_value or "Свободно: 2" in cell_value:
+                                if "Свободно: " in cell_value and "Свободно: 0" not in cell_value:
+                                    if room_data and room_data.get('capacity', 0) == int(re.search(r'Свободно: (\d+)', cell_value).group(1)) if re.search(r'Свободно: (\d+)', cell_value) else False:
+                                        cell.fill = red_fill
+                                        cell.font = Font(color="white", bold=True)
+                                    else:
+                                        cell.fill = yellow_fill
+                                        cell.font = Font(color="black", bold=True)
+                                else:
+                                    cell.fill = yellow_fill
+                                    cell.font = Font(color="black", bold=True)
+                            else:
+                                # Если не удалось определить, проверяем по наличию гостей
+                                if "—" in cell_value:
+                                    cell.fill = red_fill
+                                    cell.font = Font(color="white", bold=True)
+                                else:
+                                    cell.fill = yellow_fill
+                                    cell.font = Font(color="black", bold=True)
+                        else:
+                            cell.fill = red_fill
+                        
+                        cell.alignment = center_alignment
+                        cell.border = border
+                        
+                        # Настраиваем ширину колонок и высоту строк
+                        worksheet.column_dimensions[chr(64 + col_idx)].width = 25
+                        worksheet.row_dimensions[row_idx].height = 120
     
-    # Пытаемся зарегистрировать шрифт с поддержкой кириллицы
-    try:
-        # Вариант 1: DejaVu Sans (часто есть в Linux)
-        pdfmetrics.registerFont(TTFont('DejaVu', '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'))
-        font_name = 'DejaVu'
-    except:
-        try:
-            # Вариант 2: Liberation Sans
-            pdfmetrics.registerFont(TTFont('Liberation', '/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf'))
-            font_name = 'Liberation'
-        except:
-            try:
-                # Вариант 3: Arial (Windows/Mac)
-                pdfmetrics.registerFont(TTFont('Arial', '/usr/share/fonts/truetype/msttcorefonts/Arial.ttf'))
-                font_name = 'Arial'
-            except:
-                # Если ничего не подошло, используем стандартный шрифт с обходным путем
-                font_name = 'Helvetica'
-    
-    # Создаем стили с поддержкой кириллицы
-    styles = getSampleStyleSheet()
-    
-    if font_name != 'Helvetica':
-        # Создаем копии стилей с русским шрифтом
-        for style_name in styles.byName:
-            style = styles[style_name]
-            styles[style_name] = ParagraphStyle(
-                name=style_name,
-                parent=style,
-                fontName=font_name
-            )
-    
-    # Создаем дополнительные стили
-    styles.add(ParagraphStyle(
-        name='RussianTitle',
-        parent=styles['Heading1'],
-        fontName=font_name,
-        fontSize=16,
-        alignment=1
-    ))
-    styles.add(ParagraphStyle(
-        name='RussianNormal',
-        parent=styles['Normal'],
-        fontName=font_name,
-        fontSize=10
-    ))
-    
-    story = []
-    
-    # Заголовок
-    building_name = "Красный корпус" if building == "1" else ("Желтый корпус" if building == "2" else f"Корпус {building}")
-    title = Paragraph(f"{building_name} - Этаж {floor}", styles['RussianTitle'])
-    story.append(title)
-    story.append(Spacer(1, 0.5*cm))
-    
-    # Получаем комнаты
-    rooms = layout[building][floor]
-    sorted_rooms = sorted(rooms.items(), key=lambda x: int(re.sub(r'\D', '', x[0])))
-    
-    # Создаем таблицу
-    table_data = []
-    row = []
-    
-    for idx, (room_id, room_data) in enumerate(sorted_rooms):
-        # Формируем содержимое ячейки с корректным отображением
-        guests_text = "\n".join(room_data['guests']) if room_data['guests'] else "—"
-        
-        # Используем простой текст вместо HTML-тегов для совместимости
-        cell_lines = [
-            f"<b>{room_id}</b>",
-            f"Мест: {room_data['capacity']}",
-            f"Свободно: {room_data['free_spots']}",
-            "",
-            "<b>Заселены:</b>",
-            guests_text
-        ]
-        
-        cell_html = "<br/>".join(cell_lines)
-        row.append(Paragraph(cell_html, styles['RussianNormal']))
-        
-        if len(row) == 4:
-            table_data.append(row)
-            row = []
-    
-    if row:
-        while len(row) < 4:
-            row.append(Paragraph("", styles['RussianNormal']))
-        table_data.append(row)
-    
-    # Настраиваем таблицу
-    table = Table(table_data, colWidths=[6*cm, 6*cm, 6*cm, 6*cm])
-    table.setStyle(TableStyle([
-        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
-        ('BOX', (0, 0), (-1, -1), 1, colors.black),
-        ('GRID', (0, 0), (-1, -1), 1, colors.grey),
-        ('PADDING', (0, 0), (-1, -1), 6),
-    ]))
-    
-    story.append(table)
-    story.append(Spacer(1, 1*cm))
-    story.append(Paragraph(
-        f"Дата генерации: {datetime.now().strftime('%d.%m.%Y %H:%M')}",
-        styles['RussianNormal']
-    ))
-    
-    doc.build(story)
-    buffer.seek(0)
-    return buffer.getvalue()
-
-
-def prepare_pdfs(layout):
-    """Готовит все PDF и сохраняет в session_state"""
-    pdf_files = {}
-    
-    for building in layout:
-        if building == 'unknown':
-            continue
-        
-        building_name = "red" if building == "1" else "yellow" if building == "2" else building
-        
-        for floor in layout[building]:
-            pdf_bytes = create_floor_pdf_bytes(layout, building, floor)
-            display_name = f"Корпус {building_name} Этаж {floor}"
-            pdf_files[display_name] = pdf_bytes
-    
-    return pdf_files
+    output.seek(0)
+    return output
 
 
 def render_floor_plan(layout, selected_building=None):
@@ -419,7 +368,7 @@ residents = guests_df[guests_df["resident"] == True].copy()
 st.subheader("Гости")
 st.dataframe(guests_df)
 
-# Кнопка расселения - сохраняем результат в session_state
+# Кнопка расселения
 if st.button("🚀 Расселить"):
 
     with st.spinner("Идет расселение..."):
@@ -459,13 +408,8 @@ if st.button("🚀 Расселить"):
     allocated_guests = final_result[final_result["room_id"] != "не проживает"]
     if len(allocated_guests) > 0 and len(rooms_df) > 0:
         st.session_state.layout = create_floor_layout(allocated_guests, rooms_df)
-        # Готовим PDF заранее
-        if st.session_state.layout:
-            with st.spinner("Подготовка PDF-файлов..."):
-                st.session_state.pdf_files = prepare_pdfs(st.session_state.layout)
-                st.session_state.pdf_ready = True
     
-    # Сохраняем
+    # Сохраняем в Google Sheets
     save_results_with_details(
         SHEET_ID, 
         "Result", 
@@ -478,14 +422,12 @@ if st.button("🚀 Расселить"):
 
 
 # =========================================================
-# ОТОБРАЖЕНИЕ РЕЗУЛЬТАТОВ (если есть в session_state)
+# ОТОБРАЖЕНИЕ РЕЗУЛЬТАТОВ
 # =========================================================
 
 if st.session_state.final_result_df is not None:
     
-    # =========================================================
     # ВИЗУАЛИЗАЦИЯ ПЛАНА ЭТАЖЕЙ
-    # =========================================================
     st.subheader("🏠 План этажей с расселением")
     
     if st.session_state.layout:
@@ -524,46 +466,40 @@ if st.session_state.final_result_df is not None:
             else:
                 render_simple_floor_plan(st.session_state.layout)
         
-        # =========================================================
-        # ЭКСПОРТ В PDF
-        # =========================================================
+        # ЭКСПОРТ В EXCEL
         st.markdown("---")
-        st.subheader("📄 Экспорт в PDF")
+        st.subheader("📊 Экспорт в Excel")
         
-        if st.session_state.pdf_ready and st.session_state.pdf_files:
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                st.info(f"✅ Готово {len(st.session_state.pdf_files)} PDF-файлов")
-            
-            with col2:
-                st.write("")
-            
-            # Отображаем кнопки скачивания для каждого файла
-            for name, pdf_bytes in st.session_state.pdf_files.items():
-                st.download_button(
-                    label=f"📥 Скачать {name}",
-                    data=pdf_bytes,
-                    file_name=f"{name.replace(' ', '_')}.pdf",
-                    mime="application/pdf",
-                    key=f"download_{name}"
-                )
-        else:
-            st.warning("PDF-файлы не подготовлены")
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            if st.button("📑 Экспорт всех этажей в Excel", type="primary"):
+                with st.spinner("Создание Excel-файла..."):
+                    try:
+                        excel_bytes = export_to_excel_with_styles(st.session_state.layout)
+                        
+                        st.download_button(
+                            label="📥 Скачать план расселения (Excel)",
+                            data=excel_bytes,
+                            file_name=f"plan_raseleniya_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            key="download_excel"
+                        )
+                        st.success("Excel-файл готов!")
+                    except Exception as e:
+                        st.error(f"Ошибка при создании Excel: {str(e)}")
+        
+        with col2:
+            st.info("💡 Будет создан Excel-файл с отдельными листами для каждого этажа каждого корпуса")
     
-    # =========================================================
     # ТАБЛИЦА С РЕЗУЛЬТАТАМИ
-    # =========================================================
     st.subheader("📋 Таблица расселения")
     display_columns = ['fio', 'room_id', 'room_capacity', 'Дата заезда', 'Дата отъезда']
     existing_display = [col for col in display_columns if col in st.session_state.final_result_df.columns]
     st.dataframe(st.session_state.final_result_df[existing_display], use_container_width=True)
     
-    # Кнопка для сброса и нового расселения
+    # Кнопка для сброса
     if st.button("🔄 Новое расселение"):
         st.session_state.final_result_df = None
-        st.session_state.pdf_files = {}
-        st.session_state.pdf_ready = False
         st.session_state.layout = None
         st.rerun()
-
