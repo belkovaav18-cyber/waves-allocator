@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 
-from sheets import load_guests, save_results
+from sheets import load_guests, save_results_with_details  # меняем импорт
 from preprocess import preprocess_guests
 from solver_controller import smart_solve
 
@@ -48,6 +48,12 @@ if st.button("🚀 Расселить"):
     st.subheader("Debug")
     st.json(debug)
 
-    save_results(SHEET_ID, "Result", final_result)
+    # Сохраняем с тарифом и комментариями
+    save_results_with_details(
+        SHEET_ID, 
+        "Result", 
+        final_result, 
+        raw  # передаем исходную таблицу с тарифом и комментариями
+    )
 
     st.success("Готово")
