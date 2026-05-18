@@ -26,13 +26,6 @@ def conflict_cost(a, b):
 # HELPER: GET FLOOR FROM ROOM ID
 # =========================================================
 def get_floor_from_room_id(room_id):
-    """
-    Извлекает номер этажа из ID комнаты.
-    Примеры:
-    - "1-101" -> 1 (первая цифра после дефиса)
-    - "101" -> 1 (первая цифра номера)
-    - "2-215" -> 2
-    """
     room_str = str(room_id)
     
     if '-' in room_str:
@@ -51,13 +44,6 @@ def get_floor_from_room_id(room_id):
 # HELPER: GET BUILDING FROM ROOM ID
 # =========================================================
 def get_building_from_room_id(room_id):
-    """
-    Извлекает номер корпуса из ID комнаты.
-    Примеры:
-    - "1-101" -> 1 (красный корпус)
-    - "2-215" -> 2 (желтый корпус)
-    - "101" -> None (неопределен)
-    """
     room_str = str(room_id)
     
     if '-' in room_str:
@@ -99,12 +85,9 @@ def solve(guests, rooms):
     # CAPACITY
     # =====================================================
     for r in R:
-
         cap = int(rooms[r]["вместимость"])
-
         model.Add(
-            sum(x[g, r] for g in G)
-            <= cap
+            sum(x[g, r] for g in G) <= cap
         )
 
     objective = []
@@ -113,27 +96,17 @@ def solve(guests, rooms):
     # HARD GROUPS
     # =====================================================
     for g in G:
-
-        for other_fio in guests[g].get(
-            "group_hard",
-            []
-        ):
-
+        for other_fio in guests[g].get("group_hard", []):
             for h in G:
-
                 if guests[h]["fio"] != other_fio:
                     continue
-
                 for r in R:
-                    model.Add(
-                        x[g, r] == x[h, r]
-                    )
+                    model.Add(x[g, r] == x[h, r])
     
     # =====================================================
     # COUPLE / DOUBLE BED LOGIC
     # =====================================================
     for g in G:
-    
         hard_group = guests[g].get("group_hard", [])
         req = guests[g].get("room_type")
     
@@ -146,35 +119,22 @@ def solve(guests, rooms):
         partner_fio = hard_group[0]
     
         for h in G:
-    
             if guests[h]["fio"] != partner_fio:
                 continue
     
             for r in R:
-    
                 cap = int(rooms[r]["вместимость"])
-    
                 if cap != 2:
                     continue
     
-                both = model.NewBoolVar(
-                    f"couple_{g}_{h}_{r}"
-                )
-    
+                both = model.NewBoolVar(f"couple_{g}_{h}_{r}")
                 model.Add(both <= x[g, r])
                 model.Add(both <= x[h, r])
-    
-                model.Add(
-                    both >= x[g, r] + x[h, r] - 1
-                )
-    
-                model.Add(
-                    sum(x[k, r] for k in G)
-                    <= 2
-                ).OnlyEnforceIf(both)
+                model.Add(both >= x[g, r] + x[h, r] - 1)
+                model.Add(sum(x[k, r] for k in G) <= 2).OnlyEnforceIf(both)
 
     # =====================================================
-    # HARD: NO SUBLEASE (одноместный тариф)
+    # HARD: NO SUBLEASE (для тарифов без подселения)
     # =====================================================
     for g in G:
         if guests[g].get("require_no_subleaser", False):
@@ -199,18 +159,20 @@ def solve(guests, rooms):
     # =====================================================
     # HARD: FORCED BUILDING (ПРИНУДИТЕЛЬНЫЙ КОРПУС - ЖЕЛТЫЙ)
     # =====================================================
-    # Люди из списка должны быть ТОЛЬКО в желтом корпусе
     for g in G:
         preferred_building = guests[g].get("preferred_building")
         if preferred_building == "yellow":
             for r in R:
                 room_building = get_building_from_room_id(rooms[r]["room_id"])
-                # Если комната НЕ в желтом корпусе (не 2-xxx и не 2xx)
                 if room_building != 2:
                     model.Add(x[g, r] == 0)
-        
-        # Для красного корпуса - мягкое предпочтение (штраф)
-        elif preferred_building == "red":
+
+    # =====================================================
+    # SOFT: PREFERRED BUILDING (КРАСНЫЙ КОРПУС)
+    # =====================================================
+    for g in G:
+        preferred_building = guests[g].get("preferred_building")
+        if preferred_building == "red":
             for r in R:
                 room_building = get_building_from_room_id(rooms[r]["room_id"])
                 if room_building != 1:
@@ -219,7 +181,7 @@ def solve(guests, rooms):
                     objective.append(40 * penalty)
 
     # =====================================================
-    # SOFT: PREFERRED FLOOR (ЖЕЛАТЕЛЬНЫЙ ЭТАЖ)
+    # SOFT: PREFERRED FLOOR
     # =====================================================
     for g in G:
         preferred_floor = guests[g].get("preferred_floor")
@@ -235,144 +197,60 @@ def solve(guests, rooms):
     # CONFLICTS
     # =====================================================
     for g1 in G:
-
         for g2 in range(g1 + 1, len(guests)):
-
-            cost = conflict_cost(
-                guests[g1],
-                guests[g2]
-            )
-
+            cost = conflict_cost(guests[g1], guests[g2])
             if cost == 0:
                 continue
-
             for r in R:
-
-                p = model.NewBoolVar(
-                    f"pair_{g1}_{g2}_{r}"
-                )
-
-                model.Add(
-                    p <= x[g1, r]
-                )
-
-                model.Add(
-                    p <= x[g2, r]
-                )
-
-                model.Add(
-                    p >= x[g1, r]
-                    + x[g2, r]
-                    - 1
-                )
-
-                objective.append(
-                    cost * p
-                )
+                p = model.NewBoolVar(f"pair_{g1}_{g2}_{r}")
+                model.Add(p <= x[g1, r])
+                model.Add(p <= x[g2, r])
+                model.Add(p >= x[g1, r] + x[g2, r] - 1)
+                objective.append(cost * p)
 
     # =====================================================
     # SOFT GROUPS
     # =====================================================
     for g in G:
-
-        for other_fio in guests[g].get(
-            "group_soft",
-            []
-        ):
-
+        for other_fio in guests[g].get("group_soft", []):
             for h in G:
-
                 if guests[h]["fio"] != other_fio:
                     continue
-
                 for r in R:
-
-                    t = model.NewBoolVar(
-                        f"soft_{g}_{h}_{r}"
-                    )
-
-                    model.Add(
-                        t <= x[g, r]
-                    )
-
-                    model.Add(
-                        t <= x[h, r]
-                    )
-
-                    model.Add(
-                        t >= x[g, r]
-                        + x[h, r]
-                        - 1
-                    )
-
+                    t = model.NewBoolVar(f"soft_{g}_{h}_{r}")
+                    model.Add(t <= x[g, r])
+                    model.Add(t <= x[h, r])
+                    model.Add(t >= x[g, r] + x[h, r] - 1)
                     objective.append(-30 * t)
 
     # =====================================================
     # AVOID
     # =====================================================
     for g in G:
-
-        for other_fio in guests[g].get(
-            "group_avoid",
-            []
-        ):
-
+        for other_fio in guests[g].get("group_avoid", []):
             for h in G:
-
                 if guests[h]["fio"] != other_fio:
                     continue
-
                 for r in R:
-
-                    t = model.NewBoolVar(
-                        f"avoid_{g}_{h}_{r}"
-                    )
-
-                    model.Add(
-                        t <= x[g, r]
-                    )
-
-                    model.Add(
-                        t <= x[h, r]
-                    )
-
-                    model.Add(
-                        t >= x[g, r]
-                        + x[h, r]
-                        - 1
-                    )
-
+                    t = model.NewBoolVar(f"avoid_{g}_{h}_{r}")
+                    model.Add(t <= x[g, r])
+                    model.Add(t <= x[h, r])
+                    model.Add(t >= x[g, r] + x[h, r] - 1)
                     objective.append(100 * t)
 
     # =====================================================
     # ROOM TYPE (SOFT)
     # =====================================================
     for g in G:
-
         req = guests[g].get("room_type")
-
         if req is None:
             continue
-
         for r in R:
-
-            cap = int(
-                rooms[r]["вместимость"]
-            )
-
+            cap = int(rooms[r]["вместимость"])
             if cap != req:
-
-                penalty = model.NewBoolVar(
-                    f"room_penalty_{g}_{r}"
-                )
-
-                model.Add(
-                    penalty == x[g, r]
-                )
-
-                objective.append(
-                    50 * penalty
-                )
+                penalty = model.NewBoolVar(f"room_penalty_{g}_{r}")
+                model.Add(penalty == x[g, r])
+                objective.append(50 * penalty)
 
     # =====================================================
     # SOLVE
@@ -380,22 +258,14 @@ def solve(guests, rooms):
     model.Minimize(sum(objective))
 
     solver = cp_model.CpSolver()
-
     solver.parameters.max_time_in_seconds = 20
-
     status = solver.Solve(model)
 
     # =====================================================
     # NO SOLUTION
     # =====================================================
-    if status not in (
-        cp_model.OPTIMAL,
-        cp_model.FEASIBLE
-    ):
-
-        return pd.DataFrame([
-            {"error": "no solution"}
-        ])
+    if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+        return pd.DataFrame([{"error": "no solution"}])
 
     # =====================================================
     # RESULT
@@ -403,11 +273,8 @@ def solve(guests, rooms):
     result = []
 
     for g in G:
-
         for r in R:
-
             if solver.Value(x[g, r]):
-
                 result.append({
                     "fio": guests[g]["fio"],
                     "room_id": rooms[r]["room_id"],
@@ -418,7 +285,7 @@ def solve(guests, rooms):
 
 
 # =====================================================
-# SMART SOLVE (обертка для вызова)
+# SMART SOLVE
 # =====================================================
 def smart_solve(guests, rooms):
     """Обертка для solve с обработкой ошибок и отладкой"""
@@ -426,15 +293,25 @@ def smart_solve(guests, rooms):
         "total_guests": len(guests),
         "total_rooms": len(rooms),
         "yellow_building_people": [],
-        "red_building_people": []
+        "red_building_people": [],
+        "no_subleaser_people": [],
+        "tariff_stats": {"without_subleaser": 0, "with_subleaser": 0}
     }
     
-    # Собираем статистику по предпочтениям корпусов
     for guest in guests:
         if guest.get("preferred_building") == "yellow":
             debug["yellow_building_people"].append(guest["fio"])
         elif guest.get("preferred_building") == "red":
             debug["red_building_people"].append(guest["fio"])
+        
+        if guest.get("require_no_subleaser"):
+            debug["no_subleaser_people"].append(guest["fio"])
+        
+        tariff_type = guest.get("tariff_type")
+        if tariff_type == "without_subleaser":
+            debug["tariff_stats"]["without_subleaser"] += 1
+        elif tariff_type == "with_subleaser":
+            debug["tariff_stats"]["with_subleaser"] += 1
     
     result_df = solve(guests, rooms)
     
