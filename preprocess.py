@@ -188,37 +188,76 @@ SINGLE_ROOM_NAMES = [extract_name_only(p) for p in SINGLE_ROOM_PEOPLE]
 
 
 # =========================================================
+# PREFERRED BUILDING FOR SPECIFIC PEOPLE
+# =========================================================
+# Список людей, которые должны быть в желтом корпусе (2)
+YELLOW_BUILDING_PEOPLE = [
+    "Калиш А.Н.", "Калиш", "Цысарь С.А.", "Цысарь",
+    "Князев", "Безменова", "Отинова", "Зорина", "Дьяконов",
+    "Каминский", "Крохмаль", "Лапина", "Снигирёв", "Груняшина",
+    "Кабак", "Коньков", "Кукушкин", "Левкин", "Трунцов",
+    "Юшков", "Останин", "Львов"
+]
+
+# Нормализованные имена для поиска
+YELLOW_BUILDING_NAMES_NORM = [norm(name) for name in YELLOW_BUILDING_PEOPLE]
+
+
+def detect_forced_building(fio):
+    """
+    Определяет принудительный корпус для определенных людей.
+    Возвращает "yellow" для тех, кто должен быть в желтом корпусе.
+    """
+    fio_norm = norm(fio)
+    
+    for name in YELLOW_BUILDING_NAMES_NORM:
+        if name in fio_norm or fio_norm.startswith(name):
+            return "yellow"
+    
+    return None
+
+
+# =========================================================
 # PREFERRED BUILDING
 # =========================================================
-def detect_preferred_building(comment):
+def detect_preferred_building(comment, fio=None):
+    """
+    Определяет желаемый корпус из комментария или из принудительного списка.
+    """
+    # Сначала проверяем принудительный список
+    if fio:
+        forced = detect_forced_building(fio)
+        if forced:
+            return forced
+    
+    # Затем проверяем комментарий
     text = norm(comment)
     if "красный" in text or "1 корпус" in text:
         return "red"
     elif "желтый" in text or "2 корпус" in text:
         return "yellow"
+    
     return None
 
 
 # =========================================================
-# PREFERRED FLOOR (НОВАЯ ФУНКЦИЯ)
+# PREFERRED FLOOR
 # =========================================================
 def detect_preferred_floor(comment):
     """
     Определяет желаемый этаж из комментария.
     Возвращает номер этажа (int) или None.
-    Поддерживает фразы: "на 1 этаже", "первый этаж", "1 этаж" и т.д.
     """
     text = norm(comment)
     
-    # Паттерны для поиска этажа
     patterns = [
-        r"на\s+(\d+)\s+этаж",  # "на 1 этаже", "на 2 этаже"
-        r"(\d+)\s+этаж",        # "1 этаж", "2 этаж"
-        r"первый\s+этаж",       # "первый этаж" -> 1
-        r"второй\s+этаж",       # "второй этаж" -> 2
-        r"третий\s+этаж",       # "третий этаж" -> 3
-        r"четвертый\s+этаж",    # "четвертый этаж" -> 4
-        r"пятый\s+этаж",        # "пятый этаж" -> 5
+        r"на\s+(\d+)\s+этаж",
+        r"(\d+)\s+этаж",
+        r"первый\s+этаж",
+        r"второй\s+этаж",
+        r"третий\s+этаж",
+        r"четвертый\s+этаж",
+        r"пятый\s+этаж",
     ]
     
     floor_map = {
@@ -229,15 +268,12 @@ def detect_preferred_floor(comment):
     for pattern in patterns:
         match = re.search(pattern, text)
         if match:
-            # Если нашли цифру
             if match.group(1).isdigit():
                 return int(match.group(1))
-            # Если нашли слово "первый" и т.д.
             for word, num in floor_map.items():
                 if word in text:
                     return num
     
-    # Проверка на "не первый этаж" (игнорируем)
     if "не первый" in text or "не 1" in text:
         return None
     
@@ -245,26 +281,15 @@ def detect_preferred_floor(comment):
 
 
 def get_floor_from_room_id(room_id):
-    """
-    Извлекает номер этажа из ID комнаты.
-    Примеры:
-    - "1-101" -> 1 (первая цифра после дефиса)
-    - "101" -> 1 (первая цифра номера)
-    - "2-215" -> 2
-    - "215" -> 2
-    - "301" -> 3
-    """
+    """Извлекает номер этажа из ID комнаты."""
     room_str = str(room_id)
     
-    # Если формат "корпус-номер" (например "1-101")
     if '-' in room_str:
         after_hyphen = room_str.split('-')[1]
         if after_hyphen and after_hyphen[0].isdigit():
             return int(after_hyphen[0])
     
-    # Если просто номер комнаты (например "101" или "215")
-    # Берем первую цифру номера
-    digits = re.sub(r'\D', '', room_str)  # оставляем только цифры
+    digits = re.sub(r'\D', '', room_str)
     if digits and digits[0].isdigit():
         return int(digits[0])
     
@@ -287,7 +312,7 @@ def parse_single_tariff(row, df_original, idx):
 
 
 # =========================================================
-# COMMENT PARSER (с добавлением этажа)
+# COMMENT PARSER
 # =========================================================
 def parse_comment(comment, fio_list, single_tariff_flag=False, person_fio=None):
     text = norm(comment)
@@ -352,9 +377,10 @@ def parse_comment(comment, fio_list, single_tariff_flag=False, person_fio=None):
             "priority": 2
         })
 
-    preferred_building = detect_preferred_building(comment)
+    # Определяем предпочтительный корпус (с учетом принудительного списка)
+    preferred_building = detect_preferred_building(comment, person_fio)
     
-    # НОВОЕ: определяем желаемый этаж
+    # Определяем желаемый этаж
     preferred_floor = detect_preferred_floor(comment)
 
     return {
@@ -364,7 +390,7 @@ def parse_comment(comment, fio_list, single_tariff_flag=False, person_fio=None):
         "room_type": room_type,
         "allocation_variants": allocation_variants,
         "preferred_building": preferred_building,
-        "preferred_floor": preferred_floor,  # новый ключ
+        "preferred_floor": preferred_floor,
     }
 
 
@@ -429,8 +455,6 @@ def preprocess_guests(df):
     processed["room_type"] = [x["room_type"] for x in parsed]
     processed["allocation_variants"] = [x["allocation_variants"] for x in parsed]
     processed["preferred_building"] = [x["preferred_building"] for x in parsed]
-    
-    # НОВОЕ ПОЛЕ: желаемый этаж
     processed["preferred_floor"] = [x["preferred_floor"] for x in parsed]
 
     # Дополнительные флаги
@@ -445,15 +469,10 @@ def preprocess_guests(df):
 
 
 # =========================================================
-# ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ДЛЯ ФИЛЬТРАЦИИ КОМНАТ ПО ЭТАЖУ
+# ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ДЛЯ ФИЛЬТРАЦИИ КОМНАТ
 # =========================================================
 def filter_rooms_by_floor(rooms, preferred_floor):
-    """
-    Фильтрует комнаты по желаемому этажу.
-    rooms: список словарей с ключом 'id' (например '1-101' или '101')
-    preferred_floor: номер этажа (int)
-    возвращает отфильтрованный список комнат
-    """
+    """Фильтрует комнаты по желаемому этажу."""
     if preferred_floor is None:
         return rooms
     
@@ -463,5 +482,27 @@ def filter_rooms_by_floor(rooms, preferred_floor):
         floor = get_floor_from_room_id(room_id)
         if floor == preferred_floor:
             filtered.append(room)
+    
+    return filtered
+
+
+def filter_rooms_by_building(rooms, preferred_building):
+    """Фильтрует комнаты по желаемому корпусу."""
+    if preferred_building is None:
+        return rooms
+    
+    filtered = []
+    for room in rooms:
+        room_id = room.get('room_id', '')
+        room_str = str(room_id)
+        
+        if preferred_building == "yellow":
+            # Желтый корпус - комнаты, начинающиеся с 2- или 2
+            if room_str.startswith('2-') or room_str.startswith('2'):
+                filtered.append(room)
+        elif preferred_building == "red":
+            # Красный корпус - комнаты, начинающиеся с 1- или 1
+            if room_str.startswith('1-') or room_str.startswith('1'):
+                filtered.append(room)
     
     return filtered
