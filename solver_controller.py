@@ -1,7 +1,7 @@
 import pandas as pd  # <-- ДОБАВИТЬ ЭТУ СТРОКУ
 from solver import solve
 from feasibility import find_impossible_groups, split_groups
-
+from solver_debug import solve_simple as solve
 
 def smart_solve(guests, rooms):
     """Обертка для solve с обработкой ошибок и отладкой"""
