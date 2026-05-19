@@ -191,35 +191,34 @@ def solve(guests, rooms):
                     model.Add(x[g1, r] + x[g2, r] <= 1)
 
     # =====================================================
-# 6. HARD: GENDER SEPARATION (разнополых вместе нельзя, если не просили)
-# =====================================================
-# Создаем множество пар, которые ПРОСИЛИ жить вместе
-together_pairs = set()
-for g in G:
-    for other_fio in guests[g].get("group_hard", []):
-        if other_fio in ["NO_SUBLEASE", "MUST_BE_SINGLE"]:
-            continue
-        for h in G:
-            if guests[h]["fio"] == other_fio:
-                together_pairs.add((min(g, h), max(g, h)))
-                break
-
-# Запрещаем разнополых в одной комнате, если они не просили жить вместе
-for g1 in G:
-    for g2 in range(g1 + 1, len(guests)):
-        gender1 = guests[g1].get("gender")
-        gender2 = guests[g2].get("gender")
-        
-        # Если пол разный
-        if gender1 != gender2:
-            # Проверяем, просили ли они жить вместе
-            requested_together = (g1, g2) in together_pairs
+    # 6. HARD: GENDER SEPARATION (разнополых вместе нельзя, если не просили)
+    # =====================================================
+    # Создаем множество пар, которые ПРОСИЛИ жить вместе
+    together_pairs = set()
+    for g in G:
+        for other_fio in guests[g].get("group_hard", []):
+            if other_fio in ["NO_SUBLEASE", "MUST_BE_SINGLE"]:
+                continue
+            for h in G:
+                if guests[h]["fio"] == other_fio:
+                    together_pairs.add((min(g, h), max(g, h)))
+                    break
+    
+    # Запрещаем разнополых в одной комнате, если они не просили жить вместе
+    for g1 in G:
+        for g2 in range(g1 + 1, len(guests)):
+            gender1 = guests[g1].get("gender")
+            gender2 = guests[g2].get("gender")
             
-            if not requested_together:
-                # Запрещаем селить в одну комнату
-                for r in R:
-                    model.Add(x[g1, r] + x[g2, r] <= 1)
-
+            # Если пол разный
+            if gender1 != gender2:
+                # Проверяем, просили ли они жить вместе
+                requested_together = (g1, g2) in together_pairs
+                
+                if not requested_together:
+                    # Запрещаем селить в одну комнату
+                    for r in R:
+                        model.Add(x[g1, r] + x[g2, r] <= 1)
     # =====================================================
     # SOFT 1: COUPLE LOGIC (пары в двуместные комнаты)
     # =====================================================
