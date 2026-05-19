@@ -174,12 +174,21 @@ def extract_people_improved(comment, fio_list):
     
     # Создаем словарь для быстрого поиска по фамилии
     surname_map = {}
+    name_map = {}
     for fio in fio_list:
-        surname = norm(fio).split()[0] if fio else ""
-        if surname:
+        fio_norm = norm(fio)
+        parts = fio_norm.split()
+        if len(parts) >= 1:
+            surname = parts[0]
             if surname not in surname_map:
                 surname_map[surname] = []
             surname_map[surname].append(fio)
+        
+        if len(parts) >= 2:
+            name = parts[1]
+            if name not in name_map:
+                name_map[name] = []
+            name_map[name].append(fio)
     
     # Ищем по полному совпадению
     for fio in fio_list:
@@ -207,6 +216,50 @@ def extract_people_improved(comment, fio_list):
                 if len(possible_matches) == 1:
                     found.append(fio)
                     continue
+    
+    # ДОБАВИТЬ: поиск по измененным падежным формам
+    for fio in fio_list:
+        if fio in found:
+            continue
+        
+        fio_norm = norm(fio)
+        parts = fio_norm.split()
+        
+        if len(parts) >= 1:
+            surname = parts[0]
+            
+            # Ищем фамилию в тексте (в любом падеже)
+            surname_variants = [surname]
+            
+            # Варианты окончаний для фамилий
+            if surname.endswith('в') or surname.endswith('н'):
+                surname_variants.append(surname + 'а')
+                surname_variants.append(surname + 'у')
+                surname_variants.append(surname + 'ым')
+                surname_variants.append(surname + 'ом')
+            elif surname.endswith('й'):
+                surname_variants.append(surname[:-1] + 'я')
+                surname_variants.append(surname[:-1] + 'ю')
+                surname_variants.append(surname[:-1] + 'ем')
+            elif surname.endswith('а'):
+                surname_variants.append(surname[:-1] + 'ы')
+                surname_variants.append(surname[:-1] + 'е')
+                surname_variants.append(surname[:-1] + 'у')
+                surname_variants.append(surname[:-1] + 'ой')
+            
+            for surname_var in surname_variants:
+                if surname_var in text:
+                    # Проверяем, есть ли в тексте имя или инициал
+                    if len(parts) >= 2:
+                        name = parts[1]
+                        name_initial = name[0]
+                        # Ищем инициал
+                        if name_initial in text or name in text:
+                            found.append(fio)
+                            break
+                    else:
+                        found.append(fio)
+                        break
     
     # Используем fuzzy поиск для остальных
     for fio in fio_list:
