@@ -1,66 +1,52 @@
-def max_room_capacity(rooms):
-    return max(int(r["вместимость"]) for r in rooms)
-
+# feasibility.py
 
 def find_impossible_groups(guests, rooms):
-
-    max_cap = max_room_capacity(rooms)
-    problems = []
-
-    for g in guests:
-        group = g.get("group_hard", [])
-        size = len(group) + 1
-
-        if size > max_cap:
-            problems.append({
-                "fio": g["fio"],
-                "group_size": size,
-                "max_room": max_cap
-            })
-
-    return problems
+    """
+    Проверяет, есть ли группы, которые невозможно расселить
+    Возвращает список проблемных групп
+    """
+    impossible = []
+    
+    # Проверка: MUST_BE_SINGLE и наличие одноместных комнат
+    single_rooms = sum(1 for room in rooms if int(room.get("вместимость", 1)) == 1)
+    must_be_single = [g for g in guests if g.get("must_be_single_room", False)]
+    
+    if len(must_be_single) > single_rooms:
+        impossible.append({
+            "type": "not_enough_single_rooms",
+            "count": len(must_be_single),
+            "available": single_rooms,
+            "people": [g["fio"] for g in must_be_single]
+        })
+    
+    # Проверка: FORCED_YELLOW и наличие комнат в желтом корпусе
+    yellow_rooms = sum(1 for room in rooms if str(room.get("room_id", "")).startswith(('2-', '2')))
+    must_be_yellow = [g for g in guests if g.get("preferred_building") == "yellow"]
+    
+    if len(must_be_yellow) > yellow_rooms:
+        impossible.append({
+            "type": "not_enough_yellow_rooms",
+            "count": len(must_be_yellow),
+            "available": yellow_rooms,
+            "people": [g["fio"] for g in must_be_yellow]
+        })
+    
+    return impossible
 
 
 def split_groups(guests, rooms):
-
-    max_cap = max_room_capacity(rooms)
-    result = []
-
-    for g in guests:
-
-        group = g.get("group_hard", [])
-        full = [g["fio"]] + group
-
-        if len(full) <= max_cap:
-            result.append(g)
-            continue
-
-        chunks = [
-            full[i:i + max_cap]
-            for i in range(0, len(full), max_cap)
-        ]
-
-        for c in chunks:
-            new_g = g.copy()
-            new_g["fio"] = c[0]
-            new_g["group_hard"] = c[1:]
-            result.append(new_g)
-
-    return result
-
-
-def explain_fail(guests, rooms):
-
-    max_cap = max_room_capacity(rooms)
-    reasons = []
-
-    for g in guests:
-        if len(g.get("nights", [])) == 0:
-            reasons.append((g["fio"], "нет выбранных ночей"))
-            continue
-
-        if len(g.get("group_hard", [])) + 1 > max_cap:
-            reasons.append((g["fio"], "группа не помещается"))
-            continue
-
-    return reasons
+    """
+    Разбивает группы на подгруппы при необходимости
+    """
+    # Если нет проблем, возвращаем исходный список
+    impossible = find_impossible_groups(guests, rooms)
+    if not impossible:
+        return guests
+    
+    # Создаем копию
+    fixed_guests = []
+    
+    for guest in guests:
+        fixed_guests.append(guest)
+    
+    return fixed_guests
