@@ -535,6 +535,15 @@ def enforce_manual_rules(result_df, guests_df, rooms_list):
                     result_df.loc[result_df['fio'] == "Яснев Никита Юрьевич", 'room_id'] = rid
                     print(f"  Солянов и Яснев перемещены в {rid}")
                     break
+
+    # ПРАВИЛО 11: Евсеев + Лапин - вместе
+    if "Евсеев Дмитрий Александрович" in room_map and "Лапин Виктор Анатольевич" in room_map:
+        room_evseev = room_map["Евсеев Дмитрий Александрович"]
+        room_lapin = room_map["Лапин Виктор Анатольевич"]
+        
+        if room_evseev != room_lapin:
+            result_df.loc[result_df['fio'] == "Евсеев Дмитрий Александрович", 'room_id'] = room_lapin
+            print(f"  Евсеев перемещен к Лапину в {room_lapin}")
     print("===============================\n")
     return result_df
 
