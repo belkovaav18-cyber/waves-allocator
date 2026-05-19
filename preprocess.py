@@ -146,6 +146,12 @@ def short_versions(fio):
         f"{surname} {name[0]}",
     ]
     
+    # ДОБАВИТЬ: вариант с обратным порядком (Имя Фамилия)
+    variants.append(f"{name} {surname}")
+    if patronymic:
+        variants.append(f"{name} {patronymic} {surname}")
+        variants.append(f"{name} {surname} {patronymic}")
+    
     # Варианты с падежными окончаниями
     name_variants = []
     if name.endswith("а"):
