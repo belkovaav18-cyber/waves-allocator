@@ -1,3 +1,4 @@
+import pandas as pd  # <-- ДОБАВИТЬ ЭТУ СТРОКУ
 from solver import solve
 from feasibility import find_impossible_groups, split_groups
 
@@ -57,7 +58,6 @@ def smart_solve(guests, rooms):
         debug["age_stats"]["max"] = max(ages)
         debug["age_stats"]["avg"] = sum(ages) / len(ages)
     
-    # Печатаем отладку
     print("\n" + "="*50)
     print("DEBUG INFO")
     print("="*50)
@@ -71,17 +71,8 @@ def smart_solve(guests, rooms):
     print(f"Age stats: {debug['age_stats']}")
     print("="*50 + "\n")
     
-    # Проверка на возможность решения
     try:
-        impossible = find_impossible_groups(guests, rooms)
-        if impossible:
-            debug["impossible_groups"] = impossible
-            print(f"WARNING: Impossible groups found: {impossible}")
-        
-        fixed = split_groups(guests, rooms)
-        debug["after_split"] = len(fixed)
-        
-        result = solve(fixed, rooms)
+        result = solve(guests, rooms)
         
         if "error" in result.columns or len(result) == 0:
             debug["error"] = "No feasible solution"
