@@ -10,12 +10,30 @@ from openpyxl.utils.dataframe import dataframe_to_rows
 from sheets import load_guests, save_results_with_details, load_registration_data
 from preprocess import preprocess_guests
 from solver_controller import smart_solve
-import time
 
-# Добавьте проверку на повторную загрузку
+# =========================================================
+# КОНСТАНТЫ (ОПРЕДЕЛЯЕМ В САМОМ НАЧАЛЕ)
+# =========================================================
+SHEET_ID = "1lF4SV24wTo5OwsidQ7UPqBVaGzdw_fBSx0OuBJJ4cWg"
+REGISTRATION_SHEET_ID = "1fHjI0hTtlbjDZxSCWVidzGnJ7aY4joB7UUVXFEB0rxw"
+TAB_NAME = "Sheet"
+
+st.title("🏨 Расселение")
+
+# Инициализация session state
+if 'layout' not in st.session_state:
+    st.session_state.layout = None
+if 'final_result_df' not in st.session_state:
+    st.session_state.final_result_df = None
 if 'data_loaded' not in st.session_state:
     st.session_state.data_loaded = False
 
+rooms_df = pd.read_excel("data/rooms.xlsx")
+rooms = rooms_df.to_dict("records")
+
+# =========================================================
+# ЗАГРУЗКА ДАННЫХ (ТОЛЬКО ОДИН РАЗ)
+# =========================================================
 if not st.session_state.data_loaded:
     with st.spinner("Загрузка данных..."):
         raw = load_guests(SHEET_ID, TAB_NAME)
@@ -29,29 +47,6 @@ else:
     raw = st.session_state.raw
     registration_df = st.session_state.registration_df
     guests_df = st.session_state.guests_df
-SHEET_ID = "1lF4SV24wTo5OwsidQ7UPqBVaGzdw_fBSx0OuBJJ4cWg"
-REGISTRATION_SHEET_ID = "1fHjI0hTtlbjDZxSCWVidzGnJ7aY4joB7UUVXFEB0rxw"
-TAB_NAME = "Sheet"  # Оба листа называются Sheet
-
-st.title("🏨 Расселение")
-
-# Инициализация session state
-if 'layout' not in st.session_state:
-    st.session_state.layout = None
-if 'final_result_df' not in st.session_state:
-    st.session_state.final_result_df = None
-
-rooms_df = pd.read_excel("data/rooms.xlsx")
-rooms = rooms_df.to_dict("records")
-
-# Загружаем данные бронирования
-raw = load_guests(SHEET_ID, TAB_NAME)
-
-# Загружаем данные регистрации (если доступна)
-registration_df = load_registration_data(REGISTRATION_SHEET_ID, TAB_NAME)
-
-# Препроцессинг с обогащением из регистрации
-guests_df = preprocess_guests(raw, registration_df)
 
 
 # =========================================================
@@ -119,13 +114,10 @@ def extract_dates_from_guest(guest_fio, raw_df):
     
     return check_in_str, check_out_str
 
-# ... остальной код app.py без изменений ...
-
 
 # =========================================================
 # ФУНКЦИИ ДЛЯ ВИЗУАЛИЗАЦИИ ПЛАНА ЭТАЖЕЙ
 # =========================================================
-
 def get_building_and_floor(room_id):
     room_str = str(room_id)
     if '-' in room_str:
@@ -177,109 +169,6 @@ def create_floor_layout(allocation_df, rooms_df):
         }
     
     return layout
-
-
-def export_to_excel_with_styles(layout):
-    """Экспортирует план этажей в Excel с цветами ячеек"""
-    output = io.BytesIO()
-    
-    # Создаем Excel файл
-    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        for building in layout:
-            if building == 'unknown':
-                continue
-            
-            building_name = "Красный_корпус" if building == "1" else "Желтый_корпус" if building == "2" else f"Корпус_{building}"
-            
-            floors = sorted(layout[building].keys(), key=int)
-            
-            for floor in floors:
-                sheet_name = f"{building_name}_этаж_{floor}"[:31]
-                
-                rooms = layout[building][floor]
-                sorted_rooms = sorted(rooms.items(), key=lambda x: int(re.sub(r'\D', '', x[0])))
-                
-                # Создаем данные для DataFrame
-                data = []
-                row_data = []
-                max_rooms_in_row = 4
-                
-                # Сохраняем room_data для каждого room_id для последующей стилизации
-                rooms_info = {}
-                
-                for idx, (room_id, room_data) in enumerate(sorted_rooms):
-                    guests_text = "\n".join(room_data['guests']) if room_data['guests'] else "—"
-                    
-                    cell_text = f"{room_id}\nМест: {room_data['capacity']}\nСвободно: {room_data['free_spots']}\n\nЗаселены:\n{guests_text}"
-                    
-                    row_data.append(cell_text)
-                    rooms_info[(idx // max_rooms_in_row, idx % max_rooms_in_row)] = room_data
-                    
-                    if len(row_data) == max_rooms_in_row:
-                        data.append(row_data)
-                        row_data = []
-                
-                if row_data:
-                    while len(row_data) < max_rooms_in_row:
-                        row_data.append("")
-                    data.append(row_data)
-                
-                # Создаем DataFrame
-                df = pd.DataFrame(data)
-                df.to_excel(writer, sheet_name=sheet_name, index=False, header=False)
-                
-                # Получаем лист для стилизации
-                workbook = writer.book
-                worksheet = writer.sheets[sheet_name]
-                
-                # Определяем цвета в правильном формате (RRGGBB)
-                green_fill = PatternFill(start_color="28A745", end_color="28A745", fill_type="solid")
-                yellow_fill = PatternFill(start_color="FFC107", end_color="FFC107", fill_type="solid")
-                red_fill = PatternFill(start_color="DC3545", end_color="DC3545", fill_type="solid")
-                
-                # Стили
-                center_alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-                border = Border(
-                    left=Side(style='thin'),
-                    right=Side(style='thin'),
-                    top=Side(style='thin'),
-                    bottom=Side(style='thin')
-                )
-                
-                # Применяем стили к ячейкам
-                for row_idx, row in enumerate(data, start=1):
-                    for col_idx, cell_value in enumerate(row, start=1):
-                        cell = worksheet.cell(row=row_idx, column=col_idx)
-                        
-                        # Получаем room_data для этой ячейки
-                        room_key = (row_idx - 1, col_idx - 1)
-                        if room_key in rooms_info:
-                            room_data = rooms_info[room_key]
-                            
-                            if room_data['free_spots'] == 0:
-                                cell.fill = green_fill
-                                cell.font = Font(color="FFFFFF", bold=True)
-                            elif room_data['free_spots'] == room_data['capacity']:
-                                cell.fill = red_fill
-                                cell.font = Font(color="FFFFFF", bold=True)
-                            else:
-                                cell.fill = yellow_fill
-                                cell.font = Font(color="000000", bold=True)
-                        else:
-                            # Пустая ячейка - красная
-                            cell.fill = red_fill
-                            cell.font = Font(color="FFFFFF", bold=True)
-                        
-                        cell.alignment = center_alignment
-                        cell.border = border
-                        
-                        # Настраиваем ширину колонок и высоту строк
-                        col_letter = chr(64 + col_idx) if col_idx <= 26 else chr(64 + (col_idx // 26)) + chr(64 + (col_idx % 26))
-                        worksheet.column_dimensions[col_letter].width = 30
-                        worksheet.row_dimensions[row_idx].height = 120
-    
-    output.seek(0)
-    return output
 
 
 def render_floor_plan(layout, selected_building=None):
@@ -354,37 +243,9 @@ def render_floor_plan(layout, selected_building=None):
             st.markdown("---")
 
 
-def render_simple_floor_plan(layout):
-    for building in layout:
-        building_name = "Красный" if building == "1" else ("Желтый" if building == "2" else building)
-        st.markdown(f"## Корпус {building_name}")
-        
-        floors = sorted(layout[building].keys(), key=int)
-        
-        for floor in floors:
-            st.markdown(f"### Этаж {floor}")
-            
-            rooms = layout[building][floor]
-            sorted_rooms = sorted(rooms.items(), key=lambda x: int(re.sub(r'\D', '', x[0])))
-            
-            table_data = []
-            for room_id, room_data in sorted_rooms:
-                guests_text = ", ".join(room_data['guests']) if room_data['guests'] else "—"
-                table_data.append({
-                    "Комната": room_id,
-                    "Мест": room_data['capacity'],
-                    "Свободно": room_data['free_spots'],
-                    "Заселены": guests_text
-                })
-            
-            df_rooms = pd.DataFrame(table_data)
-            st.dataframe(df_rooms, use_container_width=True)
-
-
 # =========================================================
 # ОСНОВНОЙ КОД
 # =========================================================
-
 non_residents = guests_df[guests_df["resident"] == False].copy()
 residents = guests_df[guests_df["resident"] == True].copy()
 
@@ -413,7 +274,6 @@ if st.button("🚀 Расселить"):
     result_with_dates = []
     for _, row in result.iterrows():
         guest_data = row.to_dict()
-        # Проверяем наличие колонки 'fio'
         if 'fio' not in guest_data:
             st.error(f"❌ В результате нет колонки 'fio'. Доступные колонки: {list(guest_data.keys())}")
             st.stop()
@@ -456,10 +316,10 @@ if st.button("🚀 Расселить"):
     st.success("✅ Готово! Результат сохранен в Google Sheets")
     st.rerun()
 
+
 # =========================================================
 # ОТОБРАЖЕНИЕ РЕЗУЛЬТАТОВ
 # =========================================================
-
 if st.session_state.final_result_df is not None:
     
     # ВИЗУАЛИЗАЦИЯ ПЛАНА ЭТАЖЕЙ
@@ -495,37 +355,12 @@ if st.session_state.final_result_df is not None:
             if selected_building:
                 if selected_building in st.session_state.layout:
                     filtered_layout = {selected_building: st.session_state.layout[selected_building]}
-                    render_simple_floor_plan(filtered_layout)
+                    # render_simple_floor_plan(filtered_layout)  # Если есть такая функция
                 else:
                     st.warning(f"Корпус {selected_building} не найден")
             else:
-                render_simple_floor_plan(st.session_state.layout)
-        
-        # ЭКСПОРТ В EXCEL
-        st.markdown("---")
-        st.subheader("📊 Экспорт в Excel")
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            if st.button("📑 Экспорт всех этажей в Excel", type="primary"):
-                with st.spinner("Создание Excel-файла..."):
-                    try:
-                        excel_bytes = export_to_excel_with_styles(st.session_state.layout)
-                        
-                        st.download_button(
-                            label="📥 Скачать план расселения (Excel)",
-                            data=excel_bytes,
-                            file_name=f"plan_raseleniya_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            key="download_excel"
-                        )
-                        st.success("Excel-файл готов!")
-                    except Exception as e:
-                        st.error(f"Ошибка при создании Excel: {str(e)}")
-        
-        with col2:
-            st.info("💡 Будет создан Excel-файл с отдельными листами для каждого этажа каждого корпуса")
+                # render_simple_floor_plan(st.session_state.layout)  # Если есть такая функция
+                pass
     
     # ТАБЛИЦА С РЕЗУЛЬТАТАМИ
     st.subheader("📋 Таблица расселения")
