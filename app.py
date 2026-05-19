@@ -521,7 +521,20 @@ def enforce_manual_rules(result_df, guests_df, rooms_list):
                     result_df.loc[result_df['fio'] == "Ржанов Алексей Георгиевич", 'room_id'] = room_id
                     print(f"  Ржанов перемещен на 1 этаж: {room_id}")
                     break
-    
+    # ПРАВИЛО 10: Солянов и Яснев - вместе
+    if "Солянов Алексей Александрович" in room_map and "Яснев Никита Юрьевич" in room_map:
+        room_solyanov = room_map["Солянов Алексей Александрович"]
+        room_yasnev = room_map["Яснев Никита Юрьевич"]
+        
+        if room_solyanov != room_yasnev:
+            # Ищем двуместную комнату
+            for r in rooms_list:
+                rid = r['room_id']
+                if r.get('вместимость') == 2 and len(result_df[result_df['room_id'] == rid]) < 2:
+                    result_df.loc[result_df['fio'] == "Солянов Алексей Александрович", 'room_id'] = rid
+                    result_df.loc[result_df['fio'] == "Яснев Никита Юрьевич", 'room_id'] = rid
+                    print(f"  Солянов и Яснев перемещены в {rid}")
+                    break
     print("===============================\n")
     return result_df
 
