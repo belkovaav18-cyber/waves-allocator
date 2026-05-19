@@ -156,24 +156,54 @@ def extract_people_improved(comment, fio_list):
     text = norm(comment)
     found = []
     
+    # Создаем словарь для быстрого поиска по фамилии
+    surname_map = {}
     for fio in fio_list:
-        variants = short_versions(fio)
+        surname = norm(fio).split()[0] if fio else ""
+        if surname:
+            if surname not in surname_map:
+                surname_map[surname] = []
+            surname_map[surname].append(fio)
+    
+    # Ищем по полному совпадению
+    for fio in fio_list:
+        fio_norm = norm(fio)
+        if fio_norm in text:
+            found.append(fio)
+            continue
         
+        # Ищем по фамилии + первой букве имени
+        parts = fio_norm.split()
+        if len(parts) >= 2:
+            surname = parts[0]
+            name_initial = parts[1][0] if parts[1] else ""
+            pattern = rf"{surname}\s+{name_initial}[\.]?"
+            if re.search(pattern, text):
+                found.append(fio)
+                continue
+        
+        # Ищем по фамилии
+        if len(parts) >= 1:
+            surname = parts[0]
+            if surname in text and len(surname) > 3:
+                # Проверяем, не перепутали ли с другой фамилией
+                possible_matches = surname_map.get(surname, [])
+                if len(possible_matches) == 1:
+                    found.append(fio)
+                    continue
+    
+    # Используем fuzzy поиск для остальных
+    for fio in fio_list:
+        if fio in found:
+            continue
+        
+        variants = short_versions(fio)
         for v in variants:
             if len(v) < 3:
                 continue
             
-            if v in text:
-                found.append(fio)
-                break
-            
             score = fuzz.partial_ratio(v, text)
             if score >= 85:
-                found.append(fio)
-                break
-            
-            pattern = rf"с\s+{re.escape(v)}"
-            if re.search(pattern, text):
                 found.append(fio)
                 break
     
