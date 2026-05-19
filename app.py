@@ -244,157 +244,6 @@ def render_floor_plan(layout, selected_building=None):
 
 
 # =========================================================
-# ФУНКЦИЯ ПРИНУДИТЕЛЬНОГО ПРИМЕНЕНИЯ ПРАВИЛ
-# =========================================================
-def enforce_manual_rules(result_df, guests_df, rooms_list):
-    """
-    Принудительное применение правил для конкретных случаев
-    """
-    result_df = result_df.copy()
-    
-    # Создаем словарь для быстрого поиска комнаты по ФИО
-    room_map = {}
-    for _, row in result_df.iterrows():
-        if row['room_id'] != 'не проживает':
-            room_map[row['fio']] = row['room_id']
-    
-    print("\n=== ПРИМЕНЕНИЕ РУЧНЫХ ПРАВИЛ ===")
-    
-    # =====================================================
-    # ПРАВИЛО 1: Вьюгинова, Новик, Вьюгинов - в трехместный номер
-    # =====================================================
-    group_fios = [
-        "Вьюгинова Алена Александровна",
-        "Новик Александр Александрович", 
-        "Вьюгинов Сергей Николаевич"
-    ]
-    
-    # Находим всех из группы в result_df
-    group_in_result = [f for f in group_fios if f in room_map]
-    
-    if len(group_in_result) >= 2:
-        # Ищем трехместную комнату
-        three_bed_rooms = [r for r in rooms_list if r.get('вместимость') == 3]
-        
-        if three_bed_rooms:
-            target_room = three_bed_rooms[0]['room_id']
-            
-            # Перемещаем всех в трехместную комнату
-            for fio in group_fios:
-                if fio in room_map:
-                    old_room = room_map[fio]
-                    result_df.loc[result_df['fio'] == fio, 'room_id'] = target_room
-                    result_df.loc[result_df['fio'] == fio, 'room_capacity'] = 3
-                    print(f"  {fio}: {old_room} -> {target_room}")
-            
-            # Обновляем room_map
-            for fio in group_fios:
-                if fio in room_map:
-                    room_map[fio] = target_room
-    
-    # =====================================================
-    # ПРАВИЛО 2: Солянов и Яснев - вместе
-    # =====================================================
-    if "Солянов Алексей Александрович" in room_map and "Яснев Никита Юрьевич" in room_map:
-        room1 = room_map["Солянов Алексей Александрович"]
-        room2 = room_map["Яснев Никита Юрьевич"]
-        
-        if room1 != room2:
-            # Перемещаем Яснева к Солянову
-            result_df.loc[result_df['fio'] == "Яснев Никита Юрьевич", 'room_id'] = room1
-            print(f"  Яснев перемещен к Солянову в {room1}")
-            room_map["Яснев Никита Юрьевич"] = room1
-    
-    # =====================================================
-    # ПРАВИЛО 3: Мороков и Володарский - вместе
-    # =====================================================
-    if "Мороков Егор Степанович" in room_map and "Володарский Александр Борисович" in room_map:
-        room1 = room_map["Мороков Егор Степанович"]
-        room2 = room_map["Володарский Александр Борисович"]
-        
-        if room1 != room2:
-            # Перемещаем Володарского к Морокову
-            result_df.loc[result_df['fio'] == "Володарский Александр Борисович", 'room_id'] = room1
-            print(f"  Володарский перемещен к Морокову в {room1}")
-            room_map["Володарский Александр Борисович"] = room1
-    
-    # =====================================================
-    # ПРАВИЛО 4: Убираем разнополых из одной комнаты
-    # =====================================================
-    # Создаем карту полов
-    gender_map = {}
-    for _, row in guests_df.iterrows():
-        gender_map[row['fio']] = row.get('gender', detect_gender_by_name(row['fio']))
-    
-    # Группируем по комнатам
-    rooms_occupants = {}
-    for _, row in result_df.iterrows():
-        room = row['room_id']
-        if room != 'не проживает':
-            if room not in rooms_occupants:
-                rooms_occupants[room] = []
-            rooms_occupants[room].append(row['fio'])
-    
-    # Проверяем каждую комнату
-    for room, occupants in rooms_occupants.items():
-        if len(occupants) >= 2:
-            genders = [gender_map.get(fio, 'M') for fio in occupants]
-            has_male = 'M' in genders
-            has_female = 'F' in genders
-            
-            if has_male and has_female:
-                # Проверяем, просили ли они жить вместе
-                requested_together = False
-                for fio in occupants:
-                    guest_row = guests_df[guests_df['fio'] == fio]
-                    if len(guest_row) > 0:
-                        hard_group = guest_row.iloc[0].get('group_hard', [])
-                        for other in occupants:
-                            if other != fio and other in hard_group:
-                                requested_together = True
-                                break
-                
-                if not requested_together:
-                    # Перемещаем женщину в другую комнату
-                    females = [f for f in occupants if gender_map.get(f, 'M') == 'F']
-                    if females:
-                        female_to_move = females[0]
-                        
-                        # Ищем свободное место
-                        moved = False
-                        for r in rooms_list:
-                            room_id = r['room_id']
-                            if room_id != room:
-                                current_occupants = len(result_df[result_df['room_id'] == room_id])
-                                capacity = r.get('вместимость', 2)
-                                if current_occupants < capacity:
-                                    result_df.loc[result_df['fio'] == female_to_move, 'room_id'] = room_id
-                                    print(f"  {female_to_move} перемещена из {room} в {room_id} (разнополые)")
-                                    moved = True
-                                    break
-                        
-                        if not moved:
-                            # Ищем пустую комнату
-                            for r in rooms_list:
-                                room_id = r['room_id']
-                                if len(result_df[result_df['room_id'] == room_id]) == 0:
-                                    result_df.loc[result_df['fio'] == female_to_move, 'room_id'] = room_id
-                                    print(f"  {female_to_move} перемещена в пустую {room_id}")
-                                    break
-    
-    print("===============================\n")
-    return result_df
-
-
-def detect_gender_by_name(fio):
-    """Определение пола по окончанию ФИО"""
-    parts = str(fio).split()
-    if not parts:
-        return "M"
-    return "F" if parts[0].lower().endswith(("а", "я")) else "M"
-
-
-# =========================================================
 # ФУНКЦИЯ ЭКСПОРТА В EXCEL
 # =========================================================
 def export_to_excel_with_styles(layout):
@@ -484,6 +333,206 @@ def export_to_excel_with_styles(layout):
 
 
 # =========================================================
+# ФУНКЦИЯ ПРИНУДИТЕЛЬНОГО ПРИМЕНЕНИЯ ПРАВИЛ
+# =========================================================
+def enforce_manual_rules(result_df, guests_df, rooms_list):
+    """
+    Принудительное применение правил для конкретных случаев
+    """
+    result_df = result_df.copy()
+    
+    # Создаем словари для быстрого поиска
+    room_map = {}
+    for _, row in result_df.iterrows():
+        if row['room_id'] != 'не проживает':
+            room_map[row['fio']] = row['room_id']
+    
+    # Создаем карту дат заезда/отъезда
+    date_map = {}
+    for _, row in result_df.iterrows():
+        if 'Дата заезда' in row and 'Дата отъезда' in row:
+            date_map[row['fio']] = (row['Дата заезда'], row['Дата отъезда'])
+    
+    print("\n=== ПРИМЕНЕНИЕ РУЧНЫХ ПРАВИЛ ===")
+    
+    # =====================================================
+    # ПРАВИЛО 1: Вьюгинова, Новик, Вьюгинов - в трехместный номер
+    # =====================================================
+    group_fios = [
+        "Вьюгинова Алена Александровна",
+        "Новик Александр Александрович", 
+        "Вьюгинов Сергей Николаевич"
+    ]
+    
+    group_in_result = [f for f in group_fios if f in room_map]
+    
+    if len(group_in_result) >= 2:
+        three_bed_rooms = [r for r in rooms_list if r.get('вместимость') == 3]
+        
+        if three_bed_rooms:
+            target_room = three_bed_rooms[0]['room_id']
+            
+            for fio in group_fios:
+                if fio in room_map:
+                    old_room = room_map[fio]
+                    result_df.loc[result_df['fio'] == fio, 'room_id'] = target_room
+                    result_df.loc[result_df['fio'] == fio, 'room_capacity'] = 3
+                    print(f"  {fio}: {old_room} -> {target_room}")
+            
+            for fio in group_fios:
+                if fio in room_map:
+                    room_map[fio] = target_room
+    
+    # =====================================================
+    # ПРАВИЛО 2: Солянов и Яснев - вместе
+    # =====================================================
+    if "Солянов Алексей Александрович" in room_map and "Яснев Никита Юрьевич" in room_map:
+        room1 = room_map["Солянов Алексей Александрович"]
+        room2 = room_map["Яснев Никита Юрьевич"]
+        
+        if room1 != room2:
+            result_df.loc[result_df['fio'] == "Яснев Никита Юрьевич", 'room_id'] = room1
+            print(f"  Яснев перемещен к Солянову в {room1}")
+            room_map["Яснев Никита Юрьевич"] = room1
+    
+    # =====================================================
+    # ПРАВИЛО 3: Мороков и Володарский - вместе
+    # =====================================================
+    if "Мороков Егор Степанович" in room_map and "Володарский Александр Борисович" in room_map:
+        room1 = room_map["Мороков Егор Степанович"]
+        room2 = room_map["Володарский Александр Борисович"]
+        
+        if room1 != room2:
+            result_df.loc[result_df['fio'] == "Володарский Александр Борисович", 'room_id'] = room1
+            print(f"  Володарский перемещен к Морокову в {room1}")
+            room_map["Володарский Александр Борисович"] = room1
+    
+    # =====================================================
+    # ПРАВИЛО 4: Евсеев + Лапин - вместе
+    # =====================================================
+    if "Евсеев Дмитрий Александрович" in room_map and "Лапин Виктор Анатольевич" in room_map:
+        room_evseev = room_map["Евсеев Дмитрий Александрович"]
+        room_lapin = room_map["Лапин Виктор Анатольевич"]
+        
+        if room_evseev != room_lapin:
+            result_df.loc[result_df['fio'] == "Евсеев Дмитрий Александрович", 'room_id'] = room_lapin
+            print(f"  Евсеев перемещен к Лапину в {room_lapin}")
+            room_map["Евсеев Дмитрий Александрович"] = room_lapin
+    
+    # =====================================================
+    # ПРАВИЛО 5: Калиш + Цысарь - вместе
+    # =====================================================
+    if "Калиш Андрей Николаевич" in room_map and "Цысарь Сергей Алексеевич" in room_map:
+        room_kalish = room_map["Калиш Андрей Николаевич"]
+        room_tsysar = room_map["Цысарь Сергей Алексеевич"]
+        
+        if room_kalish != room_tsysar:
+            three_bed_rooms = [r for r in rooms_list if r.get('вместимость') == 3]
+            if three_bed_rooms:
+                target_room = three_bed_rooms[0]['room_id']
+                result_df.loc[result_df['fio'] == "Калиш Андрей Николаевич", 'room_id'] = target_room
+                result_df.loc[result_df['fio'] == "Цысарь Сергей Алексеевич", 'room_id'] = target_room
+                print(f"  Калиш и Цысарь перемещены в трехместную {target_room}")
+            else:
+                result_df.loc[result_df['fio'] == "Цысарь Сергей Алексеевич", 'room_id'] = room_kalish
+                print(f"  Цысарь перемещен к Калишу в {room_kalish}")
+    
+    # =====================================================
+    # ПРАВИЛО 6: Трибельский - в красный корпус
+    # =====================================================
+    if "Трибельский Михаил Исаакович" in room_map:
+        current_room = room_map["Трибельский Михаил Исаакович"]
+        if not str(current_room).startswith('1'):
+            red_rooms = [r for r in rooms_list if str(r.get('room_id', '')).startswith('1')]
+            for red_room in red_rooms:
+                room_id = red_room['room_id']
+                capacity = red_room.get('вместимость', 2)
+                current_occupants = len(result_df[result_df['room_id'] == room_id])
+                if current_occupants < capacity:
+                    result_df.loc[result_df['fio'] == "Трибельский Михаил Исаакович", 'room_id'] = room_id
+                    print(f"  Трибельский перемещен в красный корпус: {room_id}")
+                    break
+    
+    # =====================================================
+    # ПРАВИЛО 7: Пугач - в красный корпус на 2 этаж
+    # =====================================================
+    if "Пугач Наталия Григорьевна" in room_map:
+        current_room = room_map["Пугач Наталия Григорьевна"]
+        is_red = str(current_room).startswith('1')
+        floor = str(current_room).split('-')[1][0] if '-' in str(current_room) else None
+        
+        if not is_red or floor != '2':
+            target_rooms = []
+            for r in rooms_list:
+                room_id = str(r.get('room_id', ''))
+                if room_id.startswith('1') and '-' in room_id:
+                    floor_num = room_id.split('-')[1][0]
+                    if floor_num == '2':
+                        target_rooms.append(r)
+            
+            for target in target_rooms:
+                room_id = target['room_id']
+                capacity = target.get('вместимость', 2)
+                current_occupants = len(result_df[result_df['room_id'] == room_id])
+                if current_occupants < capacity:
+                    result_df.loc[result_df['fio'] == "Пугач Наталия Григорьевна", 'room_id'] = room_id
+                    print(f"  Пугач перемещена в красный корпус 2 этаж: {room_id}")
+                    break
+    
+    # =====================================================
+    # ПРАВИЛО 8: Бородачев - одноместный в красном корпусе
+    # =====================================================
+    if "Бородачев Леонид Васильевич" in room_map:
+        current_room = room_map["Бородачев Леонид Васильевич"]
+        current_capacity_row = result_df[result_df['fio'] == "Бородачев Леонид Васильевич"]
+        current_capacity = current_capacity_row['room_capacity'].iloc[0] if len(current_capacity_row) > 0 else 2
+        
+        if current_capacity != 1 or not str(current_room).startswith('1'):
+            single_red_rooms = []
+            for r in rooms_list:
+                room_id = str(r.get('room_id', ''))
+                capacity = r.get('вместимость', 2)
+                if room_id.startswith('1') and capacity == 1:
+                    single_red_rooms.append(r)
+            
+            for target in single_red_rooms:
+                room_id = target['room_id']
+                if len(result_df[result_df['room_id'] == room_id]) == 0:
+                    result_df.loc[result_df['fio'] == "Бородачев Леонид Васильевич", 'room_id'] = room_id
+                    result_df.loc[result_df['fio'] == "Бородачев Леонид Васильевич", 'room_capacity'] = 1
+                    print(f"  Бородачев перемещен в одноместный красный: {room_id}")
+                    break
+    
+    # =====================================================
+    # ПРАВИЛО 9: Ржанов - на 1 этаж
+    # =====================================================
+    if "Ржанов Алексей Георгиевич" in room_map:
+        current_room = room_map["Ржанов Алексей Георгиевич"]
+        floor = str(current_room).split('-')[1][0] if '-' in str(current_room) else None
+        
+        if floor != '1':
+            first_floor_rooms = []
+            for r in rooms_list:
+                room_id = str(r.get('room_id', ''))
+                if '-' in room_id:
+                    floor_num = room_id.split('-')[1][0]
+                    if floor_num == '1':
+                        first_floor_rooms.append(r)
+            
+            for target in first_floor_rooms:
+                room_id = target['room_id']
+                capacity = target.get('вместимость', 2)
+                current_occupants = len(result_df[result_df['room_id'] == room_id])
+                if current_occupants < capacity:
+                    result_df.loc[result_df['fio'] == "Ржанов Алексей Георгиевич", 'room_id'] = room_id
+                    print(f"  Ржанов перемещен на 1 этаж: {room_id}")
+                    break
+    
+    print("===============================\n")
+    return result_df
+
+
+# =========================================================
 # ОСНОВНОЙ КОД
 # =========================================================
 non_residents = guests_df[guests_df["resident"] == False].copy()
@@ -510,9 +559,6 @@ if st.button("🚀 Расселить"):
         st.error("❌ Не удалось найти решение для расселения")
         st.stop()
     
-    # ПРИМЕНЯЕМ РУЧНЫЕ ПРАВИЛА
-    result = enforce_manual_rules(result, guests_df, rooms)
-    
     # Добавляем даты
     result_with_dates = []
     for _, row in result.iterrows():
@@ -526,6 +572,9 @@ if st.button("🚀 Расселить"):
         result_with_dates.append(guest_data)
     
     result_df = pd.DataFrame(result_with_dates)
+    
+    # ПРИМЕНЯЕМ РУЧНЫЕ ПРАВИЛА
+    result_df = enforce_manual_rules(result_df, guests_df, rooms)
     
     # Нерезиденты
     non_residents_with_dates = []
@@ -584,24 +633,7 @@ if st.session_state.final_result_df is not None:
         else:
             selected_building = None
         
-        # Выбор стиля
-        view_style = st.radio(
-            "Стиль отображения:",
-            options=["Карточки", "Таблица"],
-            horizontal=True,
-            key="view_style"
-        )
-        
-        if view_style == "Карточки":
-            render_floor_plan(st.session_state.layout, selected_building)
-        else:
-            if selected_building:
-                if selected_building in st.session_state.layout:
-                    filtered_layout = {selected_building: st.session_state.layout[selected_building]}
-                else:
-                    st.warning(f"Корпус {selected_building} не найден")
-            else:
-                pass
+        render_floor_plan(st.session_state.layout, selected_building)
     
     # ТАБЛИЦА С РЕЗУЛЬТАТАМИ
     st.subheader("📋 Таблица расселения")
