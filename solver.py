@@ -68,12 +68,19 @@ def is_status_compatible(status1, status2):
 # SOLVER
 # =========================================================
 def solve(guests, rooms):
-        # Отладка: выводим все group_hard
+    # Отладка: выводим все group_hard
     print("\n=== GROUP_HARD DEBUG ===")
     for g in guests:
         if g.get("group_hard"):
             print(f"{g['fio']}: hard_group = {g['group_hard']}")
     print("=======================\n")
+    
+    # Отладка: выводим вместимость комнат
+    print("\n=== ROOMS CAPACITY ===")
+    for r in rooms:
+        print(f"{r['room_id']}: capacity = {r['вместимость']}")
+    print("======================\n")
+    
     model = cp_model.CpModel()
     G = range(len(guests))
     R = range(len(rooms))
@@ -88,7 +95,7 @@ def solve(guests, rooms):
     for g in G:
         model.Add(sum(x[g, r] for r in R) == 1)
 
-    # CAPACITY
+    # CAPACITY - ЖЕСТКОЕ ОГРАНИЧЕНИЕ
     for r in R:
         cap = int(rooms[r]["вместимость"])
         model.Add(sum(x[g, r] for g in G) <= cap)
@@ -141,8 +148,7 @@ def solve(guests, rooms):
                 for r in R:
                     model.Add(x[g1, r] + x[g2, r] <= 1)
 
-    # 6. GENDER SEPARATION (разнополых вместе нельзя, если не просили)
-    # Создаем множество пар, которые ПРОСИЛИ жить вместе
+    # 6. GENDER SEPARATION
     together_pairs = set()
     for g in G:
         for other_fio in guests[g].get("group_hard", []):
@@ -153,7 +159,6 @@ def solve(guests, rooms):
                     together_pairs.add((min(g, h), max(g, h)))
                     break
 
-    # Запрещаем разнополых в одной комнате
     for g1 in G:
         for g2 in range(g1 + 1, len(guests)):
             gender1 = guests[g1].get("gender")
@@ -325,6 +330,27 @@ def solve(guests, rooms):
     if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
         print("No solution found!")
         return pd.DataFrame([{"error": "no solution"}])
+
+    # Проверяем вместимость комнат в решении
+    room_occupancy = {}
+    for r in R:
+        room_id = rooms[r]["room_id"]
+        room_occupancy[room_id] = 0
+    
+    for g in G:
+        for r in R:
+            if solver.Value(x[g, r]):
+                room_id = rooms[r]["room_id"]
+                room_occupancy[room_id] += 1
+    
+    print("\n=== FINAL ROOM OCCUPANCY ===")
+    for room_id, count in room_occupancy.items():
+        capacity = next((r["вместимость"] for r in rooms if r["room_id"] == room_id), 0)
+        status_icon = "✅" if count <= capacity else "❌"
+        print(f"{status_icon} {room_id}: {count}/{capacity}")
+        if count > capacity:
+            print(f"    ВНИМАНИЕ! Комната {room_id} переполнена!")
+    print("============================\n")
 
     result = []
     for g in G:
