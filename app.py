@@ -347,12 +347,6 @@ def enforce_manual_rules(result_df, guests_df, rooms_list):
         if row['room_id'] != 'не проживает':
             room_map[row['fio']] = row['room_id']
     
-    # Создаем карту дат заезда/отъезда
-    date_map = {}
-    for _, row in result_df.iterrows():
-        if 'Дата заезда' in row and 'Дата отъезда' in row:
-            date_map[row['fio']] = (row['Дата заезда'], row['Дата отъезда'])
-    
     print("\n=== ПРИМЕНЕНИЕ РУЧНЫХ ПРАВИЛ ===")
     
     # =====================================================
@@ -533,6 +527,84 @@ def enforce_manual_rules(result_df, guests_df, rooms_list):
 
 
 # =========================================================
+# ФУНКЦИЯ ИСПРАВЛЕНИЯ ПЕРЕПОЛНЕННЫХ КОМНАТ
+# =========================================================
+def enforce_capacity_limits(result_df, rooms_list):
+    """
+    Проверяет и исправляет переполнение комнат
+    """
+    result_df = result_df.copy()
+    
+    # Создаем словарь вместимости комнат
+    room_capacity = {r['room_id']: r['вместимость'] for r in rooms_list}
+    
+    # Специальные группы для 2-105
+    girls_group = ["Толстых Алина Дмитриевна", "Очкина Варвара Алексеевна", "Манышева Анна Андреевна"]
+    vyugin_group = ["Вьюгинова Алена Александровна", "Новик Александр Александрович", "Вьюгинов Сергей Николаевич"]
+    
+    print("\n=== ПРОВЕРКА ПЕРЕПОЛНЕННЫХ КОМНАТ ===")
+    
+    # Проверяем каждую комнату
+    for room_id, capacity in room_capacity.items():
+        occupants = result_df[result_df['room_id'] == room_id]['fio'].tolist()
+        
+        if len(occupants) > capacity:
+            print(f"  Переполнена {room_id}: {len(occupants)}/{capacity}")
+            
+            # Специальная обработка для 2-105
+            if room_id == "2-105":
+                # Оставляем группу девочек в 2-105
+                for g in girls_group:
+                    if g in occupants:
+                        pass  # остаются
+                
+                # Перемещаем группу Вьюгиновых в другую 3-местную
+                vyugin_in_room = [v for v in vyugin_group if v in occupants]
+                if vyugin_in_room:
+                    three_bed_rooms = [r for r in rooms_list if r.get('вместимость') == 3 and r['room_id'] != "2-105"]
+                    for r in three_bed_rooms:
+                        rid = r['room_id']
+                        if len(result_df[result_df['room_id'] == rid]) == 0:
+                            for v in vyugin_in_room:
+                                result_df.loc[result_df['fio'] == v, 'room_id'] = rid
+                                result_df.loc[result_df['fio'] == v, 'room_capacity'] = 3
+                            print(f"    Группа Вьюгиновых перемещена в {rid}")
+                            break
+                        elif len(result_df[result_df['room_id'] == rid]) < 3:
+                            # Есть свободное место
+                            for v in vyugin_in_room:
+                                if len(result_df[result_df['room_id'] == rid]) < 3:
+                                    result_df.loc[result_df['fio'] == v, 'room_id'] = rid
+                                    result_df.loc[result_df['fio'] == v, 'room_capacity'] = 3
+                            print(f"    Группа Вьюгиновых перемещена в {rid} (частично)")
+                            break
+                
+                # Перемещаем остальных (Калиш, Цысарь и др.)
+                others = [o for o in occupants if o not in girls_group and o not in vyugin_group]
+                for person in others:
+                    for r in rooms_list:
+                        rid = r['room_id']
+                        if rid != room_id and len(result_df[result_df['room_id'] == rid]) < r.get('вместимость', 2):
+                            result_df.loc[result_df['fio'] == person, 'room_id'] = rid
+                            print(f"    {person} -> {rid}")
+                            break
+            
+            else:
+                # Для других комнат - перемещаем лишних
+                to_move = occupants[capacity:]
+                for person in to_move:
+                    for r in rooms_list:
+                        rid = r['room_id']
+                        if rid != room_id and len(result_df[result_df['room_id'] == rid]) < r.get('вместимость', 2):
+                            result_df.loc[result_df['fio'] == person, 'room_id'] = rid
+                            print(f"    {person} -> {rid}")
+                            break
+    
+    print("===============================\n")
+    return result_df
+
+
+# =========================================================
 # ОСНОВНОЙ КОД
 # =========================================================
 non_residents = guests_df[guests_df["resident"] == False].copy()
@@ -575,6 +647,9 @@ if st.button("🚀 Расселить"):
     
     # ПРИМЕНЯЕМ РУЧНЫЕ ПРАВИЛА
     result_df = enforce_manual_rules(result_df, guests_df, rooms)
+    
+    # ИСПРАВЛЯЕМ ПЕРЕПОЛНЕННЫЕ КОМНАТЫ
+    result_df = enforce_capacity_limits(result_df, rooms)
     
     # Нерезиденты
     non_residents_with_dates = []
