@@ -335,6 +335,45 @@ def solve(guests, rooms):
                 objective.append(50 * penalty)
 
     # =====================================================
+# SOFT 10: ALTERNATIVE VARIANTS (allocation_variants)
+# =====================================================
+for g in G:
+    variants = guests[g].get("allocation_variants", [])
+    for variant in variants:
+        room_type = variant.get("room_type")
+        group_fios = variant.get("group", [])
+        priority = variant.get("priority", 1)  # 1 - высокий, 2 - средний
+        
+        # Находим индексы людей в группе
+        group_indices = []
+        for h in G:
+            if guests[h]["fio"] in group_fios:
+                group_indices.append(h)
+        
+        if len(group_indices) != len(group_fios):
+            continue
+        
+        # Поощрение за размещение всей группы в одной комнате нужного типа
+        weight = -100 if priority == 1 else -50  # Поощрение
+        
+        for r in R:
+            cap = int(rooms[r]["вместимость"])
+            if cap != room_type:
+                continue
+            
+            # Все из группы в одной комнате
+            all_together = model.NewBoolVar(f"variant_{g}_{r}")
+            constraints = []
+            for h in group_indices:
+                constraints.append(x[h, r])
+            
+            # all_together = 1 если все в этой комнате
+            model.Add(sum(constraints) == len(group_indices)).OnlyEnforceIf(all_together)
+            model.Add(sum(constraints) < len(group_indices)).OnlyEnforceIf(all_together.Not())
+            
+            objective.append(weight * all_together)
+
+    # =====================================================
     # SOLVE
     # =====================================================
     model.Minimize(sum(objective))
