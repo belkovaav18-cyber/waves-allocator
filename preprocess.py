@@ -265,7 +265,7 @@ def short_versions(fio):
         f"{surname} {name[0]}.{patronymic[0]}." if patronymic else f"{surname} {name[0]}.",
         f"{surname} {name[0]}.{patronymic[0]}" if patronymic else f"{surname} {name[0]}",
         f"{surname} {name[0]}",
-        f"{name} {surname}",  # обратный порядок
+        f"{name} {surname}",
     ]
     
     if patronymic:
@@ -324,7 +324,6 @@ def extract_people_improved(comment, fio_list):
         if len(parts) >= 1:
             surname = parts[0]
             
-            # Падежные варианты
             surname_variants = [surname]
             if surname.endswith('й'):
                 surname_variants.append(surname[:-1] + 'я')
@@ -360,7 +359,10 @@ def extract_people_improved(comment, fio_list):
                 found.append(fio)
                 break
     
-    return list(set(found))
+    # Проверяем, что найденные люди действительно есть в списке
+    valid_found = [f for f in found if f in fio_list]
+    
+    return list(set(valid_found))
 
 
 # =========================================================
@@ -479,16 +481,14 @@ def get_floor_from_room_id(room_id):
 # =========================================================
 # SINGLE TARIFF
 # =========================================================
-def parse_single_tariff(row, df_original, idx):
-    for col in df_original.columns:
-        col_norm = norm(col)
-        if "тариф" in col_norm or "проживание" in col_norm:
-            val = df_original.loc[idx, col]
-            if pd.notna(val):
-                val_str = str(val).lower()
-                if "одномест" in val_str or "single" in val_str:
-                    return True
-    return False
+def parse_single_tariff(value):
+    """
+    Определяет, является ли тариф одноместным
+    """
+    if pd.isna(value):
+        return False
+    val_str = str(value).lower()
+    return "одномест" in val_str or "single" in val_str
 
 
 # =========================================================
@@ -616,7 +616,7 @@ def preprocess_guests(df, registration_df=None):
     else:
         comments = df[comment_col].fillna("")
 
-    # Определяем одноместный тариф (исправленная версия)
+    # Определяем одноместный тариф
     single_tariff_flags = []
     tariff_col = None
     for col in df.columns:
@@ -626,14 +626,7 @@ def preprocess_guests(df, registration_df=None):
 
     if tariff_col:
         for val in df[tariff_col]:
-            if pd.notna(val):
-                val_str = str(val).lower()
-                if "одномест" in val_str or "single" in val_str:
-                    single_tariff_flags.append(True)
-                else:
-                    single_tariff_flags.append(False)
-            else:
-                single_tariff_flags.append(False)
+            single_tariff_flags.append(parse_single_tariff(val))
     else:
         single_tariff_flags = [False] * len(df)
 
