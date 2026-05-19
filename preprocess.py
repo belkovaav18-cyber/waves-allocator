@@ -1,6 +1,7 @@
 import pandas as pd
 import re
 from rapidfuzz import fuzz
+from utils.enrichment import enrich_booking_with_registration
 
 
 # =========================================================
@@ -408,7 +409,11 @@ def parse_comment(comment, fio_list, single_tariff_flag=False, person_fio=None, 
 # =========================================================
 # MAIN PIPELINE
 # =========================================================
-def preprocess_guests(df):
+def preprocess_guests(df, registration_df=None):
+    """
+    Препроцессинг гостей из таблицы бронирования
+    с опциональным обогащением из таблицы регистрации
+    """
     df = normalize_columns(df)
 
     processed = pd.DataFrame()
@@ -479,6 +484,11 @@ def preprocess_guests(df):
     processed["must_be_single_room"] = processed["fio"].apply(
         lambda x: x in SINGLE_ROOM_NAMES
     )
+
+    # ОБОГАЩЕНИЕ ДАННЫМИ ИЗ РЕГИСТРАЦИИ
+    if registration_df is not None and not registration_df.empty:
+        processed = enrich_booking_with_registration(processed, registration_df)
+        print("Данные обогащены из таблицы регистрации")
 
     return processed
 
