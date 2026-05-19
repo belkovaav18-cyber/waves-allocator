@@ -7,32 +7,26 @@ from config import WEIGHTS
 # COST
 # =========================================================
 def conflict_cost(a, b):
-    """
-    Рассчитывает штраф за совместное проживание
-    """
     cost = 0
 
-    # Гендерный конфликт (самый большой штраф)
     if a["gender"] != b["gender"]:
         cost += WEIGHTS["gender_conflict"]
 
-    # Разные города
     if a.get("city") != b.get("city"):
         cost += WEIGHTS["city_diff"]
 
-    # Разный статус (студент/аспирант/профессор)
     if a.get("status") != b.get("status"):
         cost += WEIGHTS["status_diff"]
-    
-    # Штраф за большую разницу в возрасте
+
+    # Разница в возрасте
     age_a = a.get("age")
     age_b = b.get("age")
     if age_a and age_b:
         age_diff = abs(age_a - age_b)
         if age_diff > 10:
-            cost += 100  # Большая разница в возрасте
+            cost += 100
         elif age_diff > 5:
-            cost += 50   # Средняя разница
+            cost += 50
 
     return cost
 
@@ -73,11 +67,6 @@ def get_building_from_room_id(room_id):
 # HELPER: CHECK STATUS COMPATIBILITY
 # =========================================================
 def is_status_compatible(status1, status2):
-    """
-    Проверяет совместимость статусов для проживания
-    Нельзя селить вместе: профессора со студентом, профессора с аспирантом
-    """
-    # Определяем иерархию статусов
     status_hierarchy = {
         'student': 1,
         'postgraduate': 2,
@@ -90,12 +79,11 @@ def is_status_compatible(status1, status2):
     level1 = status_hierarchy.get(status1, 0)
     level2 = status_hierarchy.get(status2, 0)
     
-    # Разница в статусе не должна быть больше 2 уровней
     return abs(level1 - level2) <= 2
 
 
 # =========================================================
-# SOLVER WITH HIERARCHY
+# SOLVER
 # =========================================================
 def solve(guests, rooms):
 
@@ -114,7 +102,7 @@ def solve(guests, rooms):
             x[g, r] = model.NewBoolVar(f"x_{g}_{r}")
 
     # =====================================================
-    # ONE ROOM (каждый гость в одной комнате)
+    # ONE ROOM
     # =====================================================
     for g in G:
         model.Add(
@@ -122,7 +110,7 @@ def solve(guests, rooms):
         )
 
     # =====================================================
-    # CAPACITY (вместимость комнат)
+    # CAPACITY
     # =====================================================
     for r in R:
         cap = int(rooms[r]["вместимость"])
@@ -133,7 +121,7 @@ def solve(guests, rooms):
     objective = []
 
     # =====================================================
-    # 1. HARD: MUST BE SINGLE ROOM (спецсписок - только одноместные)
+    # 1. HARD: MUST BE SINGLE ROOM
     # =====================================================
     for g in G:
         if guests[g].get("must_be_single_room", False):
@@ -143,7 +131,7 @@ def solve(guests, rooms):
                     model.Add(x[g, r] == 0)
 
     # =====================================================
-    # 2. HARD: FORCED YELLOW BUILDING (спецсписок - желтый корпус)
+    # 2. HARD: FORCED YELLOW BUILDING
     # =====================================================
     for g in G:
         if guests[g].get("preferred_building") == "yellow":
@@ -153,11 +141,10 @@ def solve(guests, rooms):
                     model.Add(x[g, r] == 0)
 
     # =====================================================
-    # 3. HARD: TOGETHER GROUPS (комментарий: "поселить с")
+    # 3. HARD: TOGETHER GROUPS
     # =====================================================
     for g in G:
         for other_fio in guests[g].get("group_hard", []):
-            # Пропускаем NO_SUBLEASE и MUST_BE_SINGLE (это флаги, не люди)
             if other_fio in ["NO_SUBLEASE", "MUST_BE_SINGLE"]:
                 continue
             for h in G:
@@ -167,31 +154,29 @@ def solve(guests, rooms):
                     model.Add(x[g, r] == x[h, r])
 
     # =====================================================
-    # 4. HARD: NO SUBLEASE (тариф без подселения)
+    # 4. HARD: NO SUBLEASE
     # =====================================================
     for g in G:
         if guests[g].get("require_no_subleaser", False):
             for r in R:
                 cap = int(rooms[r]["вместимость"])
-                # В двуместную комнату нельзя подселять других
                 if cap == 2:
                     model.Add(
                         sum(x[k, r] for k in G) <= 1
                     ).OnlyEnforceIf(x[g, r])
 
     # =====================================================
-    # 5. HARD: STATUS COMPATIBILITY (студентов с профессорами нельзя)
+    # 5. HARD: STATUS COMPATIBILITY
     # =====================================================
     for g1 in G:
-        for g2 in range(g1 + 1, len(guests)):
+        for g2 in range(g1 + 1, len(guests)):  # ИСПРАВЛЕНО: len(guests)
             if not is_status_compatible(guests[g1].get("status", "student"), 
                                        guests[g2].get("status", "student")):
                 for r in R:
-                    # Запрещаем селить вместе
                     model.Add(x[g1, r] + x[g2, r] <= 1)
 
     # =====================================================
-    # SOFT 1: COUPLE LOGIC (пары в двуместные комнаты)
+    # SOFT 1: COUPLE LOGIC
     # =====================================================
     for g in G:
         hard_group = guests[g].get("group_hard", [])
@@ -221,7 +206,7 @@ def solve(guests, rooms):
                 model.Add(sum(x[k, r] for k in G) <= 2).OnlyEnforceIf(both)
 
     # =====================================================
-    # SOFT 2: SOFT GROUPS (желательно вместе)
+    # SOFT 2: SOFT GROUPS
     # =====================================================
     for g in G:
         for other_fio in guests[g].get("group_soft", []):
@@ -233,10 +218,10 @@ def solve(guests, rooms):
                     model.Add(t <= x[g, r])
                     model.Add(t <= x[h, r])
                     model.Add(t >= x[g, r] + x[h, r] - 1)
-                    objective.append(-50 * t)  # Поощрение
+                    objective.append(-30 * t)
 
     # =====================================================
-    # SOFT 3: AVOID GROUPS (не селить вместе)
+    # SOFT 3: AVOID GROUPS
     # =====================================================
     for g in G:
         for other_fio in guests[g].get("group_avoid", []):
@@ -248,10 +233,10 @@ def solve(guests, rooms):
                     model.Add(t <= x[g, r])
                     model.Add(t <= x[h, r])
                     model.Add(t >= x[g, r] + x[h, r] - 1)
-                    objective.append(100 * t)  # Штраф
+                    objective.append(100 * t)
 
     # =====================================================
-    # SOFT 4: RED BUILDING (предпочтение красного корпуса)
+    # SOFT 4: RED BUILDING
     # =====================================================
     for g in G:
         if guests[g].get("preferred_building") == "red":
@@ -276,10 +261,10 @@ def solve(guests, rooms):
                     objective.append(25 * penalty)
 
     # =====================================================
-    # SOFT 6: AGE SIMILARITY (поощряем близкий возраст)
+    # SOFT 6: AGE SIMILARITY
     # =====================================================
     for g1 in G:
-        for g2 in range(g1 + 1, G):
+        for g2 in range(g1 + 1, len(guests)):  # ИСПРАВЛЕНО: len(guests)
             age1 = guests[g1].get("age")
             age2 = guests[g2].get("age")
             if age1 and age2 and abs(age1 - age2) <= 5:
@@ -288,13 +273,13 @@ def solve(guests, rooms):
                     model.Add(t <= x[g1, r])
                     model.Add(t <= x[g2, r])
                     model.Add(t >= x[g1, r] + x[g2, r] - 1)
-                    objective.append(-20 * t)  # Поощрение за близкий возраст
+                    objective.append(-20 * t)
 
     # =====================================================
-    # SOFT 7: STATUS SIMILARITY (поощряем одинаковый статус)
+    # SOFT 7: STATUS SIMILARITY
     # =====================================================
     for g1 in G:
-        for g2 in range(g1 + 1, G):
+        for g2 in range(g1 + 1, len(guests)):  # ИСПРАВЛЕНО: len(guests)
             status1 = guests[g1].get("status", "student")
             status2 = guests[g2].get("status", "student")
             if status1 == status2:
@@ -303,13 +288,13 @@ def solve(guests, rooms):
                     model.Add(t <= x[g1, r])
                     model.Add(t <= x[g2, r])
                     model.Add(t >= x[g1, r] + x[g2, r] - 1)
-                    objective.append(-15 * t)  # Поощрение за одинаковый статус
+                    objective.append(-15 * t)
 
     # =====================================================
-    # SOFT 8: CONFLICTS (штраф за неподходящих соседей)
+    # SOFT 8: CONFLICTS
     # =====================================================
     for g1 in G:
-        for g2 in range(g1 + 1, len(guests)):
+        for g2 in range(g1 + 1, len(guests)):  # ИСПРАВЛЕНО: len(guests)
             cost = conflict_cost(guests[g1], guests[g2])
             if cost == 0:
                 continue
@@ -341,7 +326,6 @@ def solve(guests, rooms):
 
     solver = cp_model.CpSolver()
     solver.parameters.max_time_in_seconds = 30
-    solver.parameters.log_search_progress = False
     status = solver.Solve(model)
 
     # =====================================================
@@ -362,10 +346,7 @@ def solve(guests, rooms):
                 result.append({
                     "fio": guests[g]["fio"],
                     "room_id": rooms[r]["room_id"],
-                    "room_capacity": rooms[r]["вместимость"],
-                    "age": guests[g].get("age"),
-                    "status": guests[g].get("status"),
-                    "position": guests[g].get("position")
+                    "room_capacity": rooms[r]["вместимость"]
                 })
 
     return pd.DataFrame(result)
@@ -429,7 +410,6 @@ def smart_solve(guests, rooms):
         debug["age_stats"]["max"] = max(ages)
         debug["age_stats"]["avg"] = sum(ages) / len(ages)
     
-    # Печатаем отладку
     print("\n" + "="*50)
     print("DEBUG INFO")
     print("="*50)
