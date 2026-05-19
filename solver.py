@@ -180,200 +180,184 @@ def solve(guests, rooms):
                     ).OnlyEnforceIf(x[g, r])
 
     # =====================================================
-    # 5. HARD: STATUS COMPATIBILITY (студентов с профессорами нельзя)
-    # =====================================================
-    for g1 in G:
-        for g2 in range(g1 + 1, G):
-            if not is_status_compatible(guests[g1].get("status", "student"), 
-                                       guests[g2].get("status", "student")):
+# 5. HARD: STATUS COMPATIBILITY (студентов с профессорами нельзя)
+# =====================================================
+for g1 in G:
+    for g2 in range(g1 + 1, G):
+        if not is_status_compatible(guests[g1].get("status", "student"), 
+                                   guests[g2].get("status", "student")):
+            for r in R:
+                # Запрещаем селить вместе
+                model.Add(x[g1, r] + x[g2, r] <= 1)
+
+# =====================================================
+# 6. HARD: GENDER SEPARATION (разнополых вместе нельзя, если не просили)
+# =====================================================
+# Создаем множество пар, которые ПРОСИЛИ жить вместе
+together_pairs = set()
+for g in G:
+    for other_fio in guests[g].get("group_hard", []):
+        if other_fio in ["NO_SUBLEASE", "MUST_BE_SINGLE"]:
+            continue
+        for h in G:
+            if guests[h]["fio"] == other_fio:
+                together_pairs.add((min(g, h), max(g, h)))
+                break
+
+# Запрещаем разнополых в одной комнате, если они не просили жить вместе
+for g1 in G:
+    for g2 in range(g1 + 1, G):
+        gender1 = guests[g1].get("gender")
+        gender2 = guests[g2].get("gender")
+        
+        # Если пол разный
+        if gender1 != gender2:
+            # Проверяем, просили ли они жить вместе
+            requested_together = (g1, g2) in together_pairs
+            
+            if not requested_together:
+                # Запрещаем селить в одну комнату
                 for r in R:
-                    # Запрещаем селить вместе
                     model.Add(x[g1, r] + x[g2, r] <= 1)
 
-    # =====================================================
-    # 6. HARD: GENDER SEPARATION (разнополых вместе нельзя, если не просили)
-    # =====================================================
-    # Создаем множество пар, которые ПРОСИЛИ жить вместе
-    together_pairs = set()
-    for g in G:
-        for other_fio in guests[g].get("group_hard", []):
-            if other_fio in ["NO_SUBLEASE", "MUST_BE_SINGLE"]:
-                continue
-            for h in G:
-                if guests[h]["fio"] == other_fio:
-                    together_pairs.add((min(g, h), max(g, h)))
-                    break
-    
-    # Запрещаем разнополых в одной комнате, если они не просили жить вместе
-    for g1 in G:
-        for g2 in range(g1 + 1, len(guests)):
-            gender1 = guests[g1].get("gender")
-            gender2 = guests[g2].get("gender")
-            
-            # Если пол разный
-            if gender1 != gender2:
-                # Проверяем, просили ли они жить вместе
-                requested_together = (g1, g2) in together_pairs
-                
-                if not requested_together:
-                    # Запрещаем селить в одну комнату
-                    for r in R:
-                        model.Add(x[g1, r] + x[g2, r] <= 1)
-    # =====================================================
-    # SOFT 1: COUPLE LOGIC (пары в двуместные комнаты)
-    # =====================================================
-    for g in G:
-        hard_group = guests[g].get("group_hard", [])
-        req = guests[g].get("room_type")
-    
-        if len(hard_group) != 1:
+# =====================================================
+# SOFT CONSTRAINTS
+# =====================================================
+
+# SOFT 1: COUPLE LOGIC (пары в двуместные комнаты)
+for g in G:
+    hard_group = guests[g].get("group_hard", [])
+    req = guests[g].get("room_type")
+
+    if len(hard_group) != 1:
+        continue
+
+    if req != 2:
+        continue
+
+    partner_fio = hard_group[0]
+
+    for h in G:
+        if guests[h]["fio"] != partner_fio:
             continue
-    
-        if req != 2:
-            continue
-    
-        partner_fio = hard_group[0]
-    
-        for h in G:
-            if guests[h]["fio"] != partner_fio:
-                continue
-    
-            for r in R:
-                cap = int(rooms[r]["вместимость"])
-                if cap != 2:
-                    continue
-    
-                both = model.NewBoolVar(f"couple_{g}_{h}_{r}")
-                model.Add(both <= x[g, r])
-                model.Add(both <= x[h, r])
-                model.Add(both >= x[g, r] + x[h, r] - 1)
-                model.Add(sum(x[k, r] for k in G) <= 2).OnlyEnforceIf(both)
 
-    # =====================================================
-    # SOFT 2: SOFT GROUPS (желательно вместе)
-    # =====================================================
-    for g in G:
-        for other_fio in guests[g].get("group_soft", []):
-            for h in G:
-                if guests[h]["fio"] != other_fio:
-                    continue
-                for r in R:
-                    t = model.NewBoolVar(f"soft_{g}_{h}_{r}")
-                    model.Add(t <= x[g, r])
-                    model.Add(t <= x[h, r])
-                    model.Add(t >= x[g, r] + x[h, r] - 1)
-                    objective.append(-50 * t)  # Поощрение
-
-    # =====================================================
-    # SOFT 3: AVOID GROUPS (не селить вместе)
-    # =====================================================
-    for g in G:
-        for other_fio in guests[g].get("group_avoid", []):
-            for h in G:
-                if guests[h]["fio"] != other_fio:
-                    continue
-                for r in R:
-                    t = model.NewBoolVar(f"avoid_{g}_{h}_{r}")
-                    model.Add(t <= x[g, r])
-                    model.Add(t <= x[h, r])
-                    model.Add(t >= x[g, r] + x[h, r] - 1)
-                    objective.append(100 * t)  # Штраф
-
-    # =====================================================
-    # SOFT 4: RED BUILDING (предпочтение красного корпуса)
-    # =====================================================
-    for g in G:
-        if guests[g].get("preferred_building") == "red":
-            for r in R:
-                room_building = get_building_from_room_id(rooms[r]["room_id"])
-                if room_building != 1:
-                    penalty = model.NewBoolVar(f"red_building_penalty_{g}_{r}")
-                    model.Add(penalty == x[g, r])
-                    objective.append(40 * penalty)
-
-    # =====================================================
-    # SOFT 5: PREFERRED FLOOR
-    # =====================================================
-    for g in G:
-        preferred_floor = guests[g].get("preferred_floor")
-        if preferred_floor is not None:
-            for r in R:
-                room_floor = get_floor_from_room_id(rooms[r]["room_id"])
-                if room_floor != preferred_floor:
-                    penalty = model.NewBoolVar(f"floor_penalty_{g}_{r}")
-                    model.Add(penalty == x[g, r])
-                    objective.append(25 * penalty)
-
-    # =====================================================
-    # SOFT 6: AGE SIMILARITY (поощряем близкий возраст)
-    # =====================================================
-    for g1 in G:
-        for g2 in range(g1 + 1, G):
-            age1 = guests[g1].get("age")
-            age2 = guests[g2].get("age")
-            if age1 and age2 and abs(age1 - age2) <= 5:
-                for r in R:
-                    t = model.NewBoolVar(f"age_similar_{g1}_{g2}_{r}")
-                    model.Add(t <= x[g1, r])
-                    model.Add(t <= x[g2, r])
-                    model.Add(t >= x[g1, r] + x[g2, r] - 1)
-                    objective.append(-20 * t)  # Поощрение за близкий возраст
-
-    # =====================================================
-    # SOFT 7: STATUS SIMILARITY (поощряем одинаковый статус)
-    # =====================================================
-    for g1 in G:
-        for g2 in range(g1 + 1, G):
-            status1 = guests[g1].get("status", "student")
-            status2 = guests[g2].get("status", "student")
-            if status1 == status2:
-                for r in R:
-                    t = model.NewBoolVar(f"status_similar_{g1}_{g2}_{r}")
-                    model.Add(t <= x[g1, r])
-                    model.Add(t <= x[g2, r])
-                    model.Add(t >= x[g1, r] + x[g2, r] - 1)
-                    objective.append(-15 * t)  # Поощрение за одинаковый статус
-
-    # =====================================================
-    # SOFT 8: CONFLICTS (штраф за неподходящих соседей)
-    # =====================================================
-    for g1 in G:
-        for g2 in range(g1 + 1, len(guests)):
-            cost = conflict_cost(guests[g1], guests[g2])
-            if cost == 0:
-                continue
-            for r in R:
-                p = model.NewBoolVar(f"pair_{g1}_{g2}_{r}")
-                model.Add(p <= x[g1, r])
-                model.Add(p <= x[g2, r])
-                model.Add(p >= x[g1, r] + x[g2, r] - 1)
-                objective.append(cost * p)
-
-    # =====================================================
-    # SOFT 9: ROOM TYPE MISMATCH
-    # =====================================================
-    for g in G:
-        req = guests[g].get("room_type")
-        if req is None:
-            continue
         for r in R:
             cap = int(rooms[r]["вместимость"])
-            if cap != req:
-                penalty = model.NewBoolVar(f"room_penalty_{g}_{r}")
-                model.Add(penalty == x[g, r])
-                objective.append(50 * penalty)
+            if cap != 2:
+                continue
 
-    # =====================================================
+            both = model.NewBoolVar(f"couple_{g}_{h}_{r}")
+            model.Add(both <= x[g, r])
+            model.Add(both <= x[h, r])
+            model.Add(both >= x[g, r] + x[h, r] - 1)
+            model.Add(sum(x[k, r] for k in G) <= 2).OnlyEnforceIf(both)
+
+# SOFT 2: SOFT GROUPS (желательно вместе)
+for g in G:
+    for other_fio in guests[g].get("group_soft", []):
+        for h in G:
+            if guests[h]["fio"] != other_fio:
+                continue
+            for r in R:
+                t = model.NewBoolVar(f"soft_{g}_{h}_{r}")
+                model.Add(t <= x[g, r])
+                model.Add(t <= x[h, r])
+                model.Add(t >= x[g, r] + x[h, r] - 1)
+                objective.append(-50 * t)  # Поощрение
+
+# SOFT 3: AVOID GROUPS (не селить вместе)
+for g in G:
+    for other_fio in guests[g].get("group_avoid", []):
+        for h in G:
+            if guests[h]["fio"] != other_fio:
+                continue
+            for r in R:
+                t = model.NewBoolVar(f"avoid_{g}_{h}_{r}")
+                model.Add(t <= x[g, r])
+                model.Add(t <= x[h, r])
+                model.Add(t >= x[g, r] + x[h, r] - 1)
+                objective.append(100 * t)  # Штраф
+
+# SOFT 4: RED BUILDING (предпочтение красного корпуса)
+for g in G:
+    if guests[g].get("preferred_building") == "red":
+        for r in R:
+            room_building = get_building_from_room_id(rooms[r]["room_id"])
+            if room_building != 1:
+                penalty = model.NewBoolVar(f"red_building_penalty_{g}_{r}")
+                model.Add(penalty == x[g, r])
+                objective.append(40 * penalty)
+
+# SOFT 5: PREFERRED FLOOR
+for g in G:
+    preferred_floor = guests[g].get("preferred_floor")
+    if preferred_floor is not None:
+        for r in R:
+            room_floor = get_floor_from_room_id(rooms[r]["room_id"])
+            if room_floor != preferred_floor:
+                penalty = model.NewBoolVar(f"floor_penalty_{g}_{r}")
+                model.Add(penalty == x[g, r])
+                objective.append(25 * penalty)
+
+# SOFT 6: AGE SIMILARITY (поощряем близкий возраст)
+for g1 in G:
+    for g2 in range(g1 + 1, G):
+        age1 = guests[g1].get("age")
+        age2 = guests[g2].get("age")
+        if age1 and age2 and abs(age1 - age2) <= 5:
+            for r in R:
+                t = model.NewBoolVar(f"age_similar_{g1}_{g2}_{r}")
+                model.Add(t <= x[g1, r])
+                model.Add(t <= x[g2, r])
+                model.Add(t >= x[g1, r] + x[g2, r] - 1)
+                objective.append(-20 * t)  # Поощрение за близкий возраст
+
+# SOFT 7: STATUS SIMILARITY (поощряем одинаковый статус)
+for g1 in G:
+    for g2 in range(g1 + 1, G):
+        status1 = guests[g1].get("status", "student")
+        status2 = guests[g2].get("status", "student")
+        if status1 == status2:
+            for r in R:
+                t = model.NewBoolVar(f"status_similar_{g1}_{g2}_{r}")
+                model.Add(t <= x[g1, r])
+                model.Add(t <= x[g2, r])
+                model.Add(t >= x[g1, r] + x[g2, r] - 1)
+                objective.append(-15 * t)  # Поощрение за одинаковый статус
+
+# SOFT 8: CONFLICTS (штраф за неподходящих соседей)
+for g1 in G:
+    for g2 in range(g1 + 1, G):
+        cost = conflict_cost(guests[g1], guests[g2])
+        if cost == 0:
+            continue
+        for r in R:
+            p = model.NewBoolVar(f"pair_{g1}_{g2}_{r}")
+            model.Add(p <= x[g1, r])
+            model.Add(p <= x[g2, r])
+            model.Add(p >= x[g1, r] + x[g2, r] - 1)
+            objective.append(cost * p)
+
+# SOFT 9: ROOM TYPE MISMATCH
+for g in G:
+    req = guests[g].get("room_type")
+    if req is None:
+        continue
+    for r in R:
+        cap = int(rooms[r]["вместимость"])
+        if cap != req:
+            penalty = model.NewBoolVar(f"room_penalty_{g}_{r}")
+            model.Add(penalty == x[g, r])
+            objective.append(50 * penalty)
+
 # SOFT 10: ALTERNATIVE VARIANTS (allocation_variants)
-# =====================================================
 for g in G:
     variants = guests[g].get("allocation_variants", [])
     for variant in variants:
         room_type = variant.get("room_type")
         group_fios = variant.get("group", [])
-        priority = variant.get("priority", 1)  # 1 - высокий, 2 - средний
+        priority = variant.get("priority", 1)
         
-        # Находим индексы людей в группе
         group_indices = []
         for h in G:
             if guests[h]["fio"] in group_fios:
@@ -382,26 +366,22 @@ for g in G:
         if len(group_indices) != len(group_fios):
             continue
         
-        # Поощрение за размещение всей группы в одной комнате нужного типа
-        weight = -100 if priority == 1 else -50  # Поощрение
+        weight = -100 if priority == 1 else -50
         
         for r in R:
             cap = int(rooms[r]["вместимость"])
             if cap != room_type:
                 continue
             
-            # Все из группы в одной комнате
             all_together = model.NewBoolVar(f"variant_{g}_{r}")
             constraints = []
             for h in group_indices:
                 constraints.append(x[h, r])
             
-            # all_together = 1 если все в этой комнате
             model.Add(sum(constraints) == len(group_indices)).OnlyEnforceIf(all_together)
             model.Add(sum(constraints) < len(group_indices)).OnlyEnforceIf(all_together.Not())
             
             objective.append(weight * all_together)
-
     # =====================================================
     # SOLVE
     # =====================================================
