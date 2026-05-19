@@ -11,10 +11,9 @@ from sheets import load_guests, save_results_with_details, load_registration_dat
 from preprocess import preprocess_guests
 from solver_controller import smart_solve
 
-
 SHEET_ID = "1lF4SV24wTo5OwsidQ7UPqBVaGzdw_fBSx0OuBJJ4cWg"
 REGISTRATION_SHEET_ID = "1fHjI0hTtlbjDZxSCWVidzGnJ7aY4joB7UUVXFEB0rxw"
-TAB = "Sheet"
+TAB_NAME = "Sheet"  # Оба листа называются Sheet
 
 st.title("🏨 Расселение")
 
@@ -28,10 +27,10 @@ rooms_df = pd.read_excel("data/rooms.xlsx")
 rooms = rooms_df.to_dict("records")
 
 # Загружаем данные бронирования
-raw = load_guests(SHEET_ID, TAB)
+raw = load_guests(SHEET_ID, TAB_NAME)
 
-# Загружаем данные регистрации
-registration_df = load_registration_data(REGISTRATION_SHEET_ID, TAB)
+# Загружаем данные регистрации (если доступна)
+registration_df = load_registration_data(REGISTRATION_SHEET_ID, TAB_NAME)
 
 # Препроцессинг с обогащением из регистрации
 guests_df = preprocess_guests(raw, registration_df)
