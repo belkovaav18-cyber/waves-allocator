@@ -1,9 +1,11 @@
-streamlit
 pandas
-ortools
 gspread
-google-auth
+oauth2client
 rapidfuzz
+numpy
+streamlit
 openpyxl
-reportlab
+google-auth
+google-auth-oauthlib
+google-auth-httplib2
 
