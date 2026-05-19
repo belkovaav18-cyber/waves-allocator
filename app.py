@@ -382,10 +382,23 @@ if st.button("🚀 Расселить"):
             rooms
         )
     
+    # Проверяем, есть ли ошибка в результате
+    if "error" in result.columns:
+        st.error(f"❌ Ошибка при расселении: {result.iloc[0]['error']}")
+        st.stop()
+    
+    if len(result) == 0:
+        st.error("❌ Не удалось найти решение для расселения")
+        st.stop()
+    
     # Добавляем даты
     result_with_dates = []
     for _, row in result.iterrows():
         guest_data = row.to_dict()
+        # Проверяем наличие колонки 'fio'
+        if 'fio' not in guest_data:
+            st.error(f"❌ В результате нет колонки 'fio'. Доступные колонки: {list(guest_data.keys())}")
+            st.stop()
         check_in, check_out = extract_dates_from_guest(guest_data["fio"], raw)
         guest_data["Дата заезда"] = check_in
         guest_data["Дата отъезда"] = check_out
@@ -424,7 +437,6 @@ if st.button("🚀 Расселить"):
     
     st.success("✅ Готово! Результат сохранен в Google Sheets")
     st.rerun()
-
 
 # =========================================================
 # ОТОБРАЖЕНИЕ РЕЗУЛЬТАТОВ
