@@ -616,11 +616,28 @@ def preprocess_guests(df, registration_df=None):
     else:
         comments = df[comment_col].fillna("")
 
+    # Определяем одноместный тариф (исправленная версия)
     single_tariff_flags = []
-    for idx in df.index:
-        flag = parse_single_tariff(df.loc[idx], df, idx)
-        single_tariff_flags.append(flag)
+    tariff_col = None
+    for col in df.columns:
+        if "тариф" in norm(col) or "проживание" in norm(col):
+            tariff_col = col
+            break
 
+    if tariff_col:
+        for val in df[tariff_col]:
+            if pd.notna(val):
+                val_str = str(val).lower()
+                if "одномест" in val_str or "single" in val_str:
+                    single_tariff_flags.append(True)
+                else:
+                    single_tariff_flags.append(False)
+            else:
+                single_tariff_flags.append(False)
+    else:
+        single_tariff_flags = [False] * len(df)
+
+    # Парсим комментарии с учетом типа тарифа
     parsed = []
     for i, (comment, fio, tariff_type) in enumerate(zip(comments, processed["fio"], processed["tariff_type"])):
         parsed.append(
