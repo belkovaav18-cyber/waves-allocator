@@ -244,6 +244,246 @@ def render_floor_plan(layout, selected_building=None):
 
 
 # =========================================================
+# ФУНКЦИЯ ПРИНУДИТЕЛЬНОГО ПРИМЕНЕНИЯ ПРАВИЛ
+# =========================================================
+def enforce_manual_rules(result_df, guests_df, rooms_list):
+    """
+    Принудительное применение правил для конкретных случаев
+    """
+    result_df = result_df.copy()
+    
+    # Создаем словарь для быстрого поиска комнаты по ФИО
+    room_map = {}
+    for _, row in result_df.iterrows():
+        if row['room_id'] != 'не проживает':
+            room_map[row['fio']] = row['room_id']
+    
+    print("\n=== ПРИМЕНЕНИЕ РУЧНЫХ ПРАВИЛ ===")
+    
+    # =====================================================
+    # ПРАВИЛО 1: Вьюгинова, Новик, Вьюгинов - в трехместный номер
+    # =====================================================
+    group_fios = [
+        "Вьюгинова Алена Александровна",
+        "Новик Александр Александрович", 
+        "Вьюгинов Сергей Николаевич"
+    ]
+    
+    # Находим всех из группы в result_df
+    group_in_result = [f for f in group_fios if f in room_map]
+    
+    if len(group_in_result) >= 2:
+        # Ищем трехместную комнату
+        three_bed_rooms = [r for r in rooms_list if r.get('вместимость') == 3]
+        
+        if three_bed_rooms:
+            target_room = three_bed_rooms[0]['room_id']
+            
+            # Перемещаем всех в трехместную комнату
+            for fio in group_fios:
+                if fio in room_map:
+                    old_room = room_map[fio]
+                    result_df.loc[result_df['fio'] == fio, 'room_id'] = target_room
+                    result_df.loc[result_df['fio'] == fio, 'room_capacity'] = 3
+                    print(f"  {fio}: {old_room} -> {target_room}")
+            
+            # Обновляем room_map
+            for fio in group_fios:
+                if fio in room_map:
+                    room_map[fio] = target_room
+    
+    # =====================================================
+    # ПРАВИЛО 2: Солянов и Яснев - вместе
+    # =====================================================
+    if "Солянов Алексей Александрович" in room_map and "Яснев Никита Юрьевич" in room_map:
+        room1 = room_map["Солянов Алексей Александрович"]
+        room2 = room_map["Яснев Никита Юрьевич"]
+        
+        if room1 != room2:
+            # Перемещаем Яснева к Солянову
+            result_df.loc[result_df['fio'] == "Яснев Никита Юрьевич", 'room_id'] = room1
+            print(f"  Яснев перемещен к Солянову в {room1}")
+            room_map["Яснев Никита Юрьевич"] = room1
+    
+    # =====================================================
+    # ПРАВИЛО 3: Мороков и Володарский - вместе
+    # =====================================================
+    if "Мороков Егор Степанович" in room_map and "Володарский Александр Борисович" in room_map:
+        room1 = room_map["Мороков Егор Степанович"]
+        room2 = room_map["Володарский Александр Борисович"]
+        
+        if room1 != room2:
+            # Перемещаем Володарского к Морокову
+            result_df.loc[result_df['fio'] == "Володарский Александр Борисович", 'room_id'] = room1
+            print(f"  Володарский перемещен к Морокову в {room1}")
+            room_map["Володарский Александр Борисович"] = room1
+    
+    # =====================================================
+    # ПРАВИЛО 4: Убираем разнополых из одной комнаты
+    # =====================================================
+    # Создаем карту полов
+    gender_map = {}
+    for _, row in guests_df.iterrows():
+        gender_map[row['fio']] = row.get('gender', detect_gender_by_name(row['fio']))
+    
+    # Группируем по комнатам
+    rooms_occupants = {}
+    for _, row in result_df.iterrows():
+        room = row['room_id']
+        if room != 'не проживает':
+            if room not in rooms_occupants:
+                rooms_occupants[room] = []
+            rooms_occupants[room].append(row['fio'])
+    
+    # Проверяем каждую комнату
+    for room, occupants in rooms_occupants.items():
+        if len(occupants) >= 2:
+            genders = [gender_map.get(fio, 'M') for fio in occupants]
+            has_male = 'M' in genders
+            has_female = 'F' in genders
+            
+            if has_male and has_female:
+                # Проверяем, просили ли они жить вместе
+                requested_together = False
+                for fio in occupants:
+                    guest_row = guests_df[guests_df['fio'] == fio]
+                    if len(guest_row) > 0:
+                        hard_group = guest_row.iloc[0].get('group_hard', [])
+                        for other in occupants:
+                            if other != fio and other in hard_group:
+                                requested_together = True
+                                break
+                
+                if not requested_together:
+                    # Перемещаем женщину в другую комнату
+                    females = [f for f in occupants if gender_map.get(f, 'M') == 'F']
+                    if females:
+                        female_to_move = females[0]
+                        
+                        # Ищем свободное место
+                        moved = False
+                        for r in rooms_list:
+                            room_id = r['room_id']
+                            if room_id != room:
+                                current_occupants = len(result_df[result_df['room_id'] == room_id])
+                                capacity = r.get('вместимость', 2)
+                                if current_occupants < capacity:
+                                    result_df.loc[result_df['fio'] == female_to_move, 'room_id'] = room_id
+                                    print(f"  {female_to_move} перемещена из {room} в {room_id} (разнополые)")
+                                    moved = True
+                                    break
+                        
+                        if not moved:
+                            # Ищем пустую комнату
+                            for r in rooms_list:
+                                room_id = r['room_id']
+                                if len(result_df[result_df['room_id'] == room_id]) == 0:
+                                    result_df.loc[result_df['fio'] == female_to_move, 'room_id'] = room_id
+                                    print(f"  {female_to_move} перемещена в пустую {room_id}")
+                                    break
+    
+    print("===============================\n")
+    return result_df
+
+
+def detect_gender_by_name(fio):
+    """Определение пола по окончанию ФИО"""
+    parts = str(fio).split()
+    if not parts:
+        return "M"
+    return "F" if parts[0].lower().endswith(("а", "я")) else "M"
+
+
+# =========================================================
+# ФУНКЦИЯ ЭКСПОРТА В EXCEL
+# =========================================================
+def export_to_excel_with_styles(layout):
+    """Экспортирует план этажей в Excel с цветами ячеек"""
+    output = io.BytesIO()
+    
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        for building in layout:
+            if building == 'unknown':
+                continue
+            
+            building_name = "Красный_корпус" if building == "1" else "Желтый_корпус" if building == "2" else f"Корпус_{building}"
+            
+            floors = sorted(layout[building].keys(), key=int)
+            
+            for floor in floors:
+                sheet_name = f"{building_name}_этаж_{floor}"[:31]
+                
+                rooms = layout[building][floor]
+                sorted_rooms = sorted(rooms.items(), key=lambda x: int(re.sub(r'\D', '', x[0])))
+                
+                data = []
+                row_data = []
+                max_rooms_in_row = 4
+                rooms_info = {}
+                
+                for idx, (room_id, room_data) in enumerate(sorted_rooms):
+                    guests_text = "\n".join(room_data['guests']) if room_data['guests'] else "—"
+                    cell_text = f"{room_id}\nМест: {room_data['capacity']}\nСвободно: {room_data['free_spots']}\n\nЗаселены:\n{guests_text}"
+                    row_data.append(cell_text)
+                    rooms_info[(idx // max_rooms_in_row, idx % max_rooms_in_row)] = room_data
+                    
+                    if len(row_data) == max_rooms_in_row:
+                        data.append(row_data)
+                        row_data = []
+                
+                if row_data:
+                    while len(row_data) < max_rooms_in_row:
+                        row_data.append("")
+                    data.append(row_data)
+                
+                df = pd.DataFrame(data)
+                df.to_excel(writer, sheet_name=sheet_name, index=False, header=False)
+                
+                workbook = writer.book
+                worksheet = writer.sheets[sheet_name]
+                
+                green_fill = PatternFill(start_color="28A745", end_color="28A745", fill_type="solid")
+                yellow_fill = PatternFill(start_color="FFC107", end_color="FFC107", fill_type="solid")
+                red_fill = PatternFill(start_color="DC3545", end_color="DC3545", fill_type="solid")
+                
+                center_alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+                border = Border(
+                    left=Side(style='thin'),
+                    right=Side(style='thin'),
+                    top=Side(style='thin'),
+                    bottom=Side(style='thin')
+                )
+                
+                for row_idx, row in enumerate(data, start=1):
+                    for col_idx, cell_value in enumerate(row, start=1):
+                        cell = worksheet.cell(row=row_idx, column=col_idx)
+                        room_key = (row_idx - 1, col_idx - 1)
+                        if room_key in rooms_info:
+                            room_data = rooms_info[room_key]
+                            if room_data['free_spots'] == 0:
+                                cell.fill = green_fill
+                                cell.font = Font(color="FFFFFF", bold=True)
+                            elif room_data['free_spots'] == room_data['capacity']:
+                                cell.fill = red_fill
+                                cell.font = Font(color="FFFFFF", bold=True)
+                            else:
+                                cell.fill = yellow_fill
+                                cell.font = Font(color="000000", bold=True)
+                        else:
+                            cell.fill = red_fill
+                            cell.font = Font(color="FFFFFF", bold=True)
+                        
+                        cell.alignment = center_alignment
+                        cell.border = border
+                        col_letter = chr(64 + col_idx) if col_idx <= 26 else chr(64 + (col_idx // 26)) + chr(64 + (col_idx % 26))
+                        worksheet.column_dimensions[col_letter].width = 30
+                        worksheet.row_dimensions[row_idx].height = 120
+    
+    output.seek(0)
+    return output
+
+
+# =========================================================
 # ОСНОВНОЙ КОД
 # =========================================================
 non_residents = guests_df[guests_df["resident"] == False].copy()
@@ -269,6 +509,9 @@ if st.button("🚀 Расселить"):
     if len(result) == 0:
         st.error("❌ Не удалось найти решение для расселения")
         st.stop()
+    
+    # ПРИМЕНЯЕМ РУЧНЫЕ ПРАВИЛА
+    result = enforce_manual_rules(result, guests_df, rooms)
     
     # Добавляем даты
     result_with_dates = []
@@ -355,11 +598,9 @@ if st.session_state.final_result_df is not None:
             if selected_building:
                 if selected_building in st.session_state.layout:
                     filtered_layout = {selected_building: st.session_state.layout[selected_building]}
-                    # render_simple_floor_plan(filtered_layout)  # Если есть такая функция
                 else:
                     st.warning(f"Корпус {selected_building} не найден")
             else:
-                # render_simple_floor_plan(st.session_state.layout)  # Если есть такая функция
                 pass
     
     # ТАБЛИЦА С РЕЗУЛЬТАТАМИ
@@ -367,6 +608,25 @@ if st.session_state.final_result_df is not None:
     display_columns = ['fio', 'room_id', 'room_capacity', 'Дата заезда', 'Дата отъезда']
     existing_display = [col for col in display_columns if col in st.session_state.final_result_df.columns]
     st.dataframe(st.session_state.final_result_df[existing_display], use_container_width=True)
+    
+    # Кнопка для экспорта в Excel
+    if st.session_state.layout:
+        st.markdown("---")
+        st.subheader("📊 Экспорт в Excel")
+        if st.button("📑 Экспорт всех этажей в Excel", type="primary"):
+            with st.spinner("Создание Excel-файла..."):
+                try:
+                    excel_bytes = export_to_excel_with_styles(st.session_state.layout)
+                    st.download_button(
+                        label="📥 Скачать план расселения (Excel)",
+                        data=excel_bytes,
+                        file_name=f"plan_raseleniya_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        key="download_excel"
+                    )
+                    st.success("Excel-файл готов!")
+                except Exception as e:
+                    st.error(f"Ошибка при создании Excel: {str(e)}")
     
     # Кнопка для сброса
     if st.button("🔄 Новое расселение"):
