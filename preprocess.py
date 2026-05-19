@@ -405,6 +405,149 @@ def parse_comment(comment, fio_list, single_tariff_flag=False, person_fio=None, 
         "preferred_floor": preferred_floor,
     }
 
+# utils/preprocess.py - добавить функцию и изменить MAIN PIPELINE
+
+# =========================================================
+# REMOVE DUPLICATES
+# =========================================================
+def remove_duplicates_by_fio(df):
+    """
+    Удаляет дубликаты по ФИО, оставляя первую запись
+    и объединяя комментарии при необходимости
+    """
+    df = df.copy()
+    
+    # Нормализуем ФИО для сравнения
+    df['fio_normalized'] = df['ФИО'].apply(lambda x: re.sub(r'\s+', ' ', str(x).strip().lower()))
+    
+    # Находим дубликаты
+    duplicates = df[df.duplicated('fio_normalized', keep=False)]
+    
+    if len(duplicates) > 0:
+        print(f"Найдено дубликатов: {len(duplicates)}")
+        
+        # Группируем по нормализованному ФИО
+        grouped = []
+        for fio_norm, group in df.groupby('fio_normalized'):
+            if len(group) > 1:
+                # Берем первую запись как основную
+                main_row = group.iloc[0].copy()
+                
+                # Объединяем комментарии, если они разные
+                comments = []
+                for _, row in group.iterrows():
+                    comment_col = None
+                    for col in df.columns:
+                        if 'коммент' in str(col).lower():
+                            comment_col = col
+                            break
+                    if comment_col and pd.notna(row[comment_col]) and str(row[comment_col]).strip():
+                        comments.append(str(row[comment_col]).strip())
+                
+                if comments and comment_col:
+                    main_row[comment_col] = '; '.join(set(comments))
+                
+                grouped.append(main_row)
+            else:
+                grouped.append(group.iloc[0])
+        
+        result_df = pd.DataFrame(grouped)
+        result_df = result_df.drop(columns=['fio_normalized'])
+        print(f"После удаления дубликатов осталось: {len(result_df)} записей")
+        return result_df
+    else:
+        df = df.drop(columns=['fio_normalized'])
+        return df
+
+
+# =========================================================
+# NORMALIZE FIO (для поиска дубликатов с разным написанием)
+# =========================================================
+def normalize_fio_for_deduplication(fio):
+    """
+    Нормализует ФИО для поиска дубликатов с разным написанием
+    Например: "Ким Пётр Николаевич" и "Ким Петр Николаевич"
+    """
+    if pd.isna(fio):
+        return ""
+    
+    fio = str(fio).lower()
+    
+    # Заменяем ё на е
+    fio = fio.replace('ё', 'е')
+    
+    # Убираем точки и лишние пробелы
+    fio = re.sub(r'\.', '', fio)
+    fio = re.sub(r'\s+', ' ', fio).strip()
+    
+    return fio
+
+
+def remove_duplicates_smart(df):
+    """
+    Умное удаление дубликатов с учетом разных написаний
+    (Пётр vs Петр, наличие/отсутствие отчества)
+    """
+    df = df.copy()
+    
+    # Нормализуем для поиска
+    df['fio_key'] = df['ФИО'].apply(normalize_fio_for_deduplication)
+    
+    # Разбиваем на части
+    def get_key_parts(fio_key):
+        parts = fio_key.split()
+        if len(parts) >= 2:
+            return (parts[0], parts[1])  # Фамилия и имя как ключ
+        return (fio_key,)
+    
+    df['fio_key_parts'] = df['fio_key'].apply(get_key_parts)
+    
+    # Группируем по фамилии и имени
+    grouped = []
+    processed_keys = set()
+    
+    for idx, row in df.iterrows():
+        key_parts = row['fio_key_parts']
+        
+        if key_parts in processed_keys:
+            continue
+        
+        # Находим все похожие записи
+        similar = df[df['fio_key_parts'] == key_parts]
+        
+        if len(similar) > 1:
+            # Берем запись с наиболее полным ФИО
+            similar['name_length'] = similar['ФИО'].apply(lambda x: len(str(x).split()))
+            best_idx = similar['name_length'].idxmax()
+            main_row = similar.loc[best_idx].copy()
+            
+            # Объединяем комментарии
+            comment_col = None
+            for col in df.columns:
+                if 'коммент' in str(col).lower():
+                    comment_col = col
+                    break
+            
+            if comment_col:
+                comments = []
+                for _, sim_row in similar.iterrows():
+                    if pd.notna(sim_row[comment_col]) and str(sim_row[comment_col]).strip():
+                        comments.append(str(sim_row[comment_col]).strip())
+                if comments:
+                    main_row[comment_col] = '; '.join(set(comments))
+            
+            grouped.append(main_row)
+            processed_keys.add(key_parts)
+        else:
+            grouped.append(row)
+            processed_keys.add(key_parts)
+    
+    result_df = pd.DataFrame(grouped)
+    result_df = result_df.drop(columns=['fio_key', 'fio_key_parts', 'name_length'] if 'name_length' in result_df.columns else ['fio_key', 'fio_key_parts'])
+    
+    print(f"Умное удаление дубликатов: {len(df)} -> {len(result_df)} записей")
+    return result_df
+
 
 # =========================================================
 # MAIN PIPELINE
