@@ -24,7 +24,7 @@ def preprocess_guests(df, registration_df=None):
     с опциональным обогащением из таблицы регистрации
     """
     df = normalize_columns(df)
-    
+    df = expand_group_bookings(df)
     # ===== ДОБАВИТЬ ЭТОТ БЛОК =====
     # Удаляем дубликаты по ФИО
     df = remove_duplicates_smart(df)
