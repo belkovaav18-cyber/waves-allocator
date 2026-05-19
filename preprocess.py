@@ -18,23 +18,7 @@ def normalize_columns(df):
     )
     return df
 
-def preprocess_guests(df, registration_df=None):
-    """
-    Препроцессинг гостей из таблицы бронирования
-    с опциональным обогащением из таблицы регистрации
-    """
-    df = normalize_columns(df)
-    df = expand_group_bookings(df)
-    # ===== ДОБАВИТЬ ЭТОТ БЛОК =====
-    # Удаляем дубликаты по ФИО
-    df = remove_duplicates_smart(df)
-    # ==============================
 
-    processed = pd.DataFrame()
-
-    # BASIC
-    processed["fio"] = df["ФИО"]
-    # ... остальной код ...
 # =========================================================
 # HELPERS
 # =========================================================
@@ -44,6 +28,149 @@ def norm(x):
         " ",
         str(x).strip().lower()
     )
+
+
+# =========================================================
+# SPLIT GROUP BOOKINGS (разбиение групповых бронирований)
+# =========================================================
+def split_group_booking(fio_string):
+    """
+    Разбивает строку с несколькими ФИО на отдельные записи.
+    """
+    if pd.isna(fio_string):
+        return [fio_string]
+    
+    fio_str = str(fio_string)
+    
+    # Разделители: запятая, "и", перевод строки
+    separators = [',', 'и,', 'и', '\n', ';', '/']
+    
+    has_separator = any(sep in fio_str for sep in separators)
+    
+    if not has_separator:
+        if '),' in fio_str or ') ,' in fio_str:
+            has_separator = True
+    
+    if has_separator:
+        parts = re.split(r'[,;]|\s+и\s+', fio_str)
+        result = []
+        for part in parts:
+            part = part.strip()
+            part = re.sub(r'\s*\([^)]*\)', '', part)
+            part = re.sub(r'\s+', ' ', part)
+            if part and len(part) > 5:
+                result.append(part)
+        
+        if len(result) > 1:
+            return result
+    
+    return [fio_string]
+
+
+def expand_group_bookings(df):
+    """
+    Разворачивает групповые бронирования в отдельные строки.
+    """
+    expanded_rows = []
+    
+    for idx, row in df.iterrows():
+        fio = row.get('ФИО', '')
+        if pd.isna(fio):
+            continue
+        
+        individuals = split_group_booking(fio)
+        
+        if len(individuals) > 1:
+            for individual in individuals:
+                new_row = row.copy()
+                new_row['ФИО'] = individual
+                expanded_rows.append(new_row)
+            
+            print(f"Разбита групповая запись '{fio}' на {len(individuals)} человек: {individuals}")
+        else:
+            expanded_rows.append(row)
+    
+    result_df = pd.DataFrame(expanded_rows)
+    print(f"Развернуто групповых бронирований: {len(df)} -> {len(result_df)} записей")
+    return result_df
+
+
+# =========================================================
+# REMOVE DUPLICATES
+# =========================================================
+def normalize_fio_for_deduplication(fio):
+    """
+    Нормализует ФИО для поиска дубликатов с разным написанием
+    """
+    if pd.isna(fio):
+        return ""
+    
+    fio = str(fio).lower()
+    fio = fio.replace('ё', 'е')
+    fio = re.sub(r'\.', '', fio)
+    fio = re.sub(r'\s+', ' ', fio).strip()
+    
+    return fio
+
+
+def remove_duplicates_smart(df):
+    """
+    Умное удаление дубликатов с учетом разных написаний
+    """
+    print(f"До удаления дубликатов: {len(df)} записей")
+    df = df.copy()
+    
+    df['fio_key'] = df['ФИО'].apply(normalize_fio_for_deduplication)
+    
+    def get_key_parts(fio_key):
+        parts = fio_key.split()
+        if len(parts) >= 2:
+            return (parts[0], parts[1])
+        return (fio_key,)
+    
+    df['fio_key_parts'] = df['fio_key'].apply(get_key_parts)
+    
+    grouped = []
+    processed_keys = set()
+    
+    for idx, row in df.iterrows():
+        key_parts = row['fio_key_parts']
+        
+        if key_parts in processed_keys:
+            continue
+        
+        similar = df[df['fio_key_parts'] == key_parts]
+        
+        if len(similar) > 1:
+            similar['name_length'] = similar['ФИО'].apply(lambda x: len(str(x).split()))
+            best_idx = similar['name_length'].idxmax()
+            main_row = similar.loc[best_idx].copy()
+            
+            comment_col = None
+            for col in df.columns:
+                if 'коммент' in str(col).lower():
+                    comment_col = col
+                    break
+            
+            if comment_col:
+                comments = []
+                for _, sim_row in similar.iterrows():
+                    if pd.notna(sim_row[comment_col]) and str(sim_row[comment_col]).strip():
+                        comments.append(str(sim_row[comment_col]).strip())
+                if comments:
+                    main_row[comment_col] = '; '.join(set(comments))
+            
+            grouped.append(main_row)
+            processed_keys.add(key_parts)
+        else:
+            grouped.append(row)
+            processed_keys.add(key_parts)
+    
+    result_df = pd.DataFrame(grouped)
+    result_df = result_df.drop(columns=['fio_key', 'fio_key_parts', 'name_length'] if 'name_length' in result_df.columns else ['fio_key', 'fio_key_parts'])
+    
+    print(f"После удаления дубликатов: {len(result_df)} записей")
+    return result_df
 
 
 # =========================================================
@@ -76,15 +203,9 @@ def parse_resident(v):
 
 
 # =========================================================
-# TARIFF TYPE PARSER (НОВАЯ ФУНКЦИЯ)
+# TARIFF TYPE PARSER
 # =========================================================
 def parse_tariff_type(v):
-    """
-    Определяет тип тарифа:
-    - "without_subleaser" - размещение без подселения
-    - "with_subleaser" - размещение с подселением
-    - None - не определен
-    """
     if pd.isna(v):
         return None
     
@@ -144,31 +265,12 @@ def short_versions(fio):
         f"{surname} {name[0]}.{patronymic[0]}." if patronymic else f"{surname} {name[0]}.",
         f"{surname} {name[0]}.{patronymic[0]}" if patronymic else f"{surname} {name[0]}",
         f"{surname} {name[0]}",
+        f"{name} {surname}",  # обратный порядок
     ]
     
-    # ДОБАВИТЬ: вариант с обратным порядком (Имя Фамилия)
-    variants.append(f"{name} {surname}")
     if patronymic:
         variants.append(f"{name} {patronymic} {surname}")
         variants.append(f"{name} {surname} {patronymic}")
-    
-    # Варианты с падежными окончаниями
-    name_variants = []
-    if name.endswith("а"):
-        name_variants.append(name[:-1] + "ы")
-        name_variants.append(name[:-1] + "е")
-        name_variants.append(name[:-1] + "у")
-        name_variants.append(name[:-1] + "ой")
-    
-    if patronymic and patronymic.endswith("а"):
-        name_variants.append(patronymic[:-1] + "ы")
-        name_variants.append(patronymic[:-1] + "е")
-        name_variants.append(patronymic[:-1] + "у")
-        name_variants.append(patronymic[:-1] + "ой")
-    
-    for nv in name_variants:
-        variants.append(f"{surname} {nv}")
-        variants.append(f"{surname} {name} {nv}")
     
     return list(set(variants))
 
@@ -178,114 +280,23 @@ def extract_people_improved(comment, fio_list):
     text = norm(comment)
     found = []
     
-    # Предварительно обрабатываем текст: удаляем предлоги "с", "со"
-    text_clean = re.sub(r'\b(с|со)\s+', ' ', text)
-    
     # Создаем словарь для быстрого поиска по фамилии
     surname_map = {}
     for fio in fio_list:
-        fio_norm = norm(fio)
-        parts = fio_norm.split()
-        if len(parts) >= 1:
-            surname = parts[0]
+        surname = norm(fio).split()[0] if fio else ""
+        if surname:
             if surname not in surname_map:
                 surname_map[surname] = []
             surname_map[surname].append(fio)
     
-    # Функция для генерации падежных вариантов фамилии
-    def get_surname_variants(surname):
-        variants = [surname]
-        
-        # Варианты окончаний для русских фамилий
-        if surname.endswith('в') or surname.endswith('н') or surname.endswith('д'):
-            variants.append(surname + 'а')
-            variants.append(surname + 'у')
-            variants.append(surname + 'ым')
-            variants.append(surname + 'ом')
-        elif surname.endswith('й'):
-            variants.append(surname[:-1] + 'я')
-            variants.append(surname[:-1] + 'ю')
-            variants.append(surname[:-1] + 'ем')
-            variants.append(surname[:-1] + 'его')
-        elif surname.endswith('а'):
-            variants.append(surname[:-1] + 'ы')
-            variants.append(surname[:-1] + 'е')
-            variants.append(surname[:-1] + 'у')
-            variants.append(surname[:-1] + 'ой')
-        elif surname.endswith('я'):
-            variants.append(surname[:-1] + 'и')
-            variants.append(surname[:-1] + 'е')
-            variants.append(surname[:-1] + 'ю')
-            variants.append(surname[:-1] + 'ей')
-        elif surname.endswith('ь'):
-            variants.append(surname[:-1] + 'я')
-            variants.append(surname[:-1] + 'ю')
-            variants.append(surname[:-1] + 'ем')
-        
-        return list(set(variants))
-    
-    # Поиск по фамилии с падежами
-    for fio in fio_list:
-        if fio in found:
-            continue
-        
-        fio_norm = norm(fio)
-        parts = fio_norm.split()
-        
-        if len(parts) >= 1:
-            surname = parts[0]
-            surname_variants = get_surname_variants(surname)
-            
-            for surname_var in surname_variants:
-                if surname_var in text_clean:
-                    # Нашли фамилию, проверяем имя
-                    if len(parts) >= 2:
-                        name = parts[1]
-                        name_initial = name[0]
-                        # Ищем имя или инициал рядом с фамилией
-                        # Шаблон: "Фамилия И." или "И. Фамилия" или "Имя Фамилия"
-                        patterns = [
-                            rf'{surname_var}\s+{name_initial}[\.]?',
-                            rf'{name_initial}[\.]?\s+{surname_var}',
-                            rf'{name}\s+{surname_var}',
-                        ]
-                        for pattern in patterns:
-                            if re.search(pattern, text_clean):
-                                found.append(fio)
-                                break
-                        if fio in found:
-                            break
-                    else:
-                        # Только фамилия
-                        found.append(fio)
-                        break
-    
-    # Создаем словарь для быстрого поиска по фамилии
-    surname_map = {}
-    name_map = {}
-    for fio in fio_list:
-        fio_norm = norm(fio)
-        parts = fio_norm.split()
-        if len(parts) >= 1:
-            surname = parts[0]
-            if surname not in surname_map:
-                surname_map[surname] = []
-            surname_map[surname].append(fio)
-        
-        if len(parts) >= 2:
-            name = parts[1]
-            if name not in name_map:
-                name_map[name] = []
-            name_map[name].append(fio)
-    
-    # Ищем по полному совпадению
+    # 1. Поиск по полному совпадению
     for fio in fio_list:
         fio_norm = norm(fio)
         if fio_norm in text:
             found.append(fio)
             continue
         
-        # Ищем по фамилии + первой букве имени
+        # 2. Поиск по фамилии + первой букве имени
         parts = fio_norm.split()
         if len(parts) >= 2:
             surname = parts[0]
@@ -295,61 +306,47 @@ def extract_people_improved(comment, fio_list):
                 found.append(fio)
                 continue
         
-        # Ищем по фамилии
+        # 3. Поиск по фамилии (если уникальна)
         if len(parts) >= 1:
             surname = parts[0]
             if surname in text and len(surname) > 3:
-                # Проверяем, не перепутали ли с другой фамилией
                 possible_matches = surname_map.get(surname, [])
                 if len(possible_matches) == 1:
                     found.append(fio)
                     continue
     
-    # ДОБАВИТЬ: поиск по измененным падежным формам
+    # 4. Поиск по падежным формам фамилии
     for fio in fio_list:
         if fio in found:
             continue
         
-        fio_norm = norm(fio)
-        parts = fio_norm.split()
-        
+        parts = norm(fio).split()
         if len(parts) >= 1:
             surname = parts[0]
             
-            # Ищем фамилию в тексте (в любом падеже)
+            # Падежные варианты
             surname_variants = [surname]
-            
-            # Варианты окончаний для фамилий
-            if surname.endswith('в') or surname.endswith('н'):
+            if surname.endswith('й'):
+                surname_variants.append(surname[:-1] + 'я')
+                surname_variants.append(surname[:-1] + 'ю')
+                surname_variants.append(surname[:-1] + 'его')
+            elif surname.endswith('в') or surname.endswith('н'):
                 surname_variants.append(surname + 'а')
                 surname_variants.append(surname + 'у')
                 surname_variants.append(surname + 'ым')
-                surname_variants.append(surname + 'ом')
-            elif surname.endswith('й'):
-                surname_variants.append(surname[:-1] + 'я')
-                surname_variants.append(surname[:-1] + 'ю')
-                surname_variants.append(surname[:-1] + 'ем')
-            elif surname.endswith('а'):
-                surname_variants.append(surname[:-1] + 'ы')
-                surname_variants.append(surname[:-1] + 'е')
-                surname_variants.append(surname[:-1] + 'у')
-                surname_variants.append(surname[:-1] + 'ой')
             
             for surname_var in surname_variants:
                 if surname_var in text:
-                    # Проверяем, есть ли в тексте имя или инициал
                     if len(parts) >= 2:
                         name = parts[1]
-                        name_initial = name[0]
-                        # Ищем инициал
-                        if name_initial in text or name in text:
+                        if name[0] in text or name in text:
                             found.append(fio)
                             break
                     else:
                         found.append(fio)
                         break
     
-    # Используем fuzzy поиск для остальных
+    # 5. Fuzzy поиск
     for fio in fio_list:
         if fio in found:
             continue
@@ -358,7 +355,6 @@ def extract_people_improved(comment, fio_list):
         for v in variants:
             if len(v) < 3:
                 continue
-            
             score = fuzz.partial_ratio(v, text)
             if score >= 85:
                 found.append(fio)
@@ -407,13 +403,10 @@ YELLOW_BUILDING_NAMES_NORM = [norm(name) for name in YELLOW_BUILDING_PEOPLE]
 
 
 def detect_forced_building(fio):
-    """Определяет принудительный корпус для определенных людей"""
     fio_norm = norm(fio)
-    
     for name in YELLOW_BUILDING_NAMES_NORM:
         if name in fio_norm or fio_norm.startswith(name):
             return "yellow"
-    
     return None
 
 
@@ -421,7 +414,6 @@ def detect_forced_building(fio):
 # PREFERRED BUILDING
 # =========================================================
 def detect_preferred_building(comment, fio=None):
-    """Определяет желаемый корпус из комментария или из принудительного списка"""
     if fio:
         forced = detect_forced_building(fio)
         if forced:
@@ -440,7 +432,6 @@ def detect_preferred_building(comment, fio=None):
 # PREFERRED FLOOR
 # =========================================================
 def detect_preferred_floor(comment):
-    """Определяет желаемый этаж из комментария"""
     text = norm(comment)
     
     patterns = [
@@ -471,7 +462,6 @@ def detect_preferred_floor(comment):
 
 
 def get_floor_from_room_id(room_id):
-    """Извлекает номер этажа из ID комнаты"""
     room_str = str(room_id)
     
     if '-' in room_str:
@@ -487,7 +477,7 @@ def get_floor_from_room_id(room_id):
 
 
 # =========================================================
-# SINGLE TARIFF (старая функция для одноместного тарифа)
+# SINGLE TARIFF
 # =========================================================
 def parse_single_tariff(row, df_original, idx):
     for col in df_original.columns:
@@ -521,32 +511,23 @@ def parse_comment(comment, fio_list, single_tariff_flag=False, person_fio=None, 
     elif "трехмест" in text or "трёхмест" in text:
         room_type = 3
 
-    # Одноместный тариф (старая логика)
     if single_tariff_flag:
         room_type = 2
         hard.append("NO_SUBLEASE")
 
-    # НОВАЯ ЛОГИКА: тариф "без подселения"
     if tariff_type == "without_subleaser":
-        # Селятся в двуместные номера, но без подселения других
         room_type = 2
         hard.append("NO_SUBLEASE")
     
-    # НОВАЯ ЛОГИКА: тариф "с подселением"
     if tariff_type == "with_subleaser":
-        # Селятся в двуместные номера, можно подселять других
         room_type = 2
-        # Не добавляем ограничение NO_SUBLEASE
 
-    # Спецсписок
     if person_fio and person_fio in SINGLE_ROOM_NAMES:
         room_type = 1
         hard.append("MUST_BE_SINGLE")
 
-    # Ищем людей
     found_people = extract_people_improved(comment, fio_list)
 
-    # TOGETHER WORDS
     together_words = [
         "вместе", "совместно", "поселить с", "проживание с",
         "заселить с", "с подселением", "с женой", "с мужем", "с супруг",
@@ -555,17 +536,14 @@ def parse_comment(comment, fio_list, single_tariff_flag=False, person_fio=None, 
     if any(w in text for w in together_words):
         hard.extend(found_people)
 
-    # SOFT WORDS
     soft_words = ["желательно", "если возможно", "по возможности", "хотелось бы"]
     if any(w in text for w in soft_words):
         soft.extend(found_people)
 
-    # AVOID
     avoid_words = ["не селить", "не вместе", "не хочу"]
     if any(w in text for w in avoid_words):
         avoid.extend(found_people)
 
-    # PRIORITY VARIANTS
     if "если" in text and "3" in text and len(found_people) >= 2:
         allocation_variants.append({
             "room_type": 3,
@@ -592,149 +570,6 @@ def parse_comment(comment, fio_list, single_tariff_flag=False, person_fio=None, 
         "preferred_floor": preferred_floor,
     }
 
-# utils/preprocess.py - добавить функцию и изменить MAIN PIPELINE
-
-# =========================================================
-# REMOVE DUPLICATES
-# =========================================================
-def remove_duplicates_by_fio(df):
-    """
-    Удаляет дубликаты по ФИО, оставляя первую запись
-    и объединяя комментарии при необходимости
-    """
-    df = df.copy()
-    
-    # Нормализуем ФИО для сравнения
-    df['fio_normalized'] = df['ФИО'].apply(lambda x: re.sub(r'\s+', ' ', str(x).strip().lower()))
-    
-    # Находим дубликаты
-    duplicates = df[df.duplicated('fio_normalized', keep=False)]
-    
-    if len(duplicates) > 0:
-        print(f"Найдено дубликатов: {len(duplicates)}")
-        
-        # Группируем по нормализованному ФИО
-        grouped = []
-        for fio_norm, group in df.groupby('fio_normalized'):
-            if len(group) > 1:
-                # Берем первую запись как основную
-                main_row = group.iloc[0].copy()
-                
-                # Объединяем комментарии, если они разные
-                comments = []
-                for _, row in group.iterrows():
-                    comment_col = None
-                    for col in df.columns:
-                        if 'коммент' in str(col).lower():
-                            comment_col = col
-                            break
-                    if comment_col and pd.notna(row[comment_col]) and str(row[comment_col]).strip():
-                        comments.append(str(row[comment_col]).strip())
-                
-                if comments and comment_col:
-                    main_row[comment_col] = '; '.join(set(comments))
-                
-                grouped.append(main_row)
-            else:
-                grouped.append(group.iloc[0])
-        
-        result_df = pd.DataFrame(grouped)
-        result_df = result_df.drop(columns=['fio_normalized'])
-        print(f"После удаления дубликатов осталось: {len(result_df)} записей")
-        return result_df
-    else:
-        df = df.drop(columns=['fio_normalized'])
-        return df
-
-
-# =========================================================
-# NORMALIZE FIO (для поиска дубликатов с разным написанием)
-# =========================================================
-def normalize_fio_for_deduplication(fio):
-    """
-    Нормализует ФИО для поиска дубликатов с разным написанием
-    Например: "Ким Пётр Николаевич" и "Ким Петр Николаевич"
-    """
-    if pd.isna(fio):
-        return ""
-    
-    fio = str(fio).lower()
-    
-    # Заменяем ё на е
-    fio = fio.replace('ё', 'е')
-    
-    # Убираем точки и лишние пробелы
-    fio = re.sub(r'\.', '', fio)
-    fio = re.sub(r'\s+', ' ', fio).strip()
-    
-    return fio
-
-
-def remove_duplicates_smart(df):
-    """
-    Умное удаление дубликатов с учетом разных написаний
-    (Пётр vs Петр, наличие/отсутствие отчества)
-    """
-    df = df.copy()
-    
-    # Нормализуем для поиска
-    df['fio_key'] = df['ФИО'].apply(normalize_fio_for_deduplication)
-    
-    # Разбиваем на части
-    def get_key_parts(fio_key):
-        parts = fio_key.split()
-        if len(parts) >= 2:
-            return (parts[0], parts[1])  # Фамилия и имя как ключ
-        return (fio_key,)
-    
-    df['fio_key_parts'] = df['fio_key'].apply(get_key_parts)
-    
-    # Группируем по фамилии и имени
-    grouped = []
-    processed_keys = set()
-    
-    for idx, row in df.iterrows():
-        key_parts = row['fio_key_parts']
-        
-        if key_parts in processed_keys:
-            continue
-        
-        # Находим все похожие записи
-        similar = df[df['fio_key_parts'] == key_parts]
-        
-        if len(similar) > 1:
-            # Берем запись с наиболее полным ФИО
-            similar['name_length'] = similar['ФИО'].apply(lambda x: len(str(x).split()))
-            best_idx = similar['name_length'].idxmax()
-            main_row = similar.loc[best_idx].copy()
-            
-            # Объединяем комментарии
-            comment_col = None
-            for col in df.columns:
-                if 'коммент' in str(col).lower():
-                    comment_col = col
-                    break
-            
-            if comment_col:
-                comments = []
-                for _, sim_row in similar.iterrows():
-                    if pd.notna(sim_row[comment_col]) and str(sim_row[comment_col]).strip():
-                        comments.append(str(sim_row[comment_col]).strip())
-                if comments:
-                    main_row[comment_col] = '; '.join(set(comments))
-            
-            grouped.append(main_row)
-            processed_keys.add(key_parts)
-        else:
-            grouped.append(row)
-            processed_keys.add(key_parts)
-    
-    result_df = pd.DataFrame(grouped)
-    result_df = result_df.drop(columns=['fio_key', 'fio_key_parts', 'name_length'] if 'name_length' in result_df.columns else ['fio_key', 'fio_key_parts'])
-    
-    print(f"Умное удаление дубликатов: {len(df)} -> {len(result_df)} записей")
-    return result_df
-
 
 # =========================================================
 # MAIN PIPELINE
@@ -745,27 +580,28 @@ def preprocess_guests(df, registration_df=None):
     с опциональным обогащением из таблицы регистрации
     """
     df = normalize_columns(df)
+    
+    # Разбиваем групповые бронирования
+    df = expand_group_bookings(df)
+    
+    # Удаляем дубликаты по ФИО
+    df = remove_duplicates_smart(df)
 
     processed = pd.DataFrame()
 
-    # BASIC
     processed["fio"] = df["ФИО"]
     processed["resident"] = df.get("Выбор тарифа за проживание", "").apply(parse_resident)
     processed["gender"] = processed["fio"].apply(detect_gender)
     processed["city"] = df.get("Город", "UNKNOWN")
     processed["status"] = df.get("Статус", "student")
-
-    # НОВОЕ: определяем тип тарифа
     processed["tariff_type"] = df.get("Выбор тарифа за проживание", "").apply(parse_tariff_type)
 
-    # NIGHTS
     processed["nights"] = df.apply(extract_nights, axis=1)
     processed["nights"] = processed.apply(
         lambda row: [] if not row["resident"] else row["nights"],
         axis=1
     )
 
-    # COMMENTS
     fio_list = processed["fio"].tolist()
 
     comment_col = None
@@ -780,13 +616,11 @@ def preprocess_guests(df, registration_df=None):
     else:
         comments = df[comment_col].fillna("")
 
-    # Определяем одноместный тариф (старая логика)
     single_tariff_flags = []
     for idx in df.index:
         flag = parse_single_tariff(df.loc[idx], df, idx)
         single_tariff_flags.append(flag)
 
-    # Парсим комментарии с учетом типа тарифа
     parsed = []
     for i, (comment, fio, tariff_type) in enumerate(zip(comments, processed["fio"], processed["tariff_type"])):
         parsed.append(
@@ -807,7 +641,6 @@ def preprocess_guests(df, registration_df=None):
     processed["preferred_building"] = [x["preferred_building"] for x in parsed]
     processed["preferred_floor"] = [x["preferred_floor"] for x in parsed]
 
-    # Дополнительные флаги
     processed["require_no_subleaser"] = processed["group_hard"].apply(
         lambda x: "NO_SUBLEASE" in x
     )
@@ -815,92 +648,17 @@ def preprocess_guests(df, registration_df=None):
         lambda x: x in SINGLE_ROOM_NAMES
     )
 
-    # ОБОГАЩЕНИЕ ДАННЫМИ ИЗ РЕГИСТРАЦИИ
     if registration_df is not None and not registration_df.empty:
         processed = enrich_booking_with_registration(processed, registration_df)
         print("Данные обогащены из таблицы регистрации")
 
     return processed
 
-# =========================================================
-# SPLIT GROUP BOOKINGS (разбиение групповых бронирований)
-# =========================================================
 
-def split_group_booking(fio_string):
-    """
-    Разбивает строку с несколькими ФИО на отдельные записи.
-    Например: "Вьюгинова А.А., Новик А.А., Вьюгинов С.Н." -> список ФИО
-    """
-    if pd.isna(fio_string):
-        return [fio_string]
-    
-    fio_str = str(fio_string)
-    
-    # Разделители: запятая, "и", перевод строки
-    separators = [',', 'и,', 'и', '\n', ';', '/']
-    
-    # Проверяем наличие разделителей
-    has_separator = any(sep in fio_str for sep in separators)
-    
-    if not has_separator:
-        # Проверяем наличие нескольких людей в формате "ФИО1 (роль), ФИО2 (роль)"
-        if '),' in fio_str or ') ,' in fio_str:
-            has_separator = True
-    
-    if has_separator:
-        # Разбиваем по запятым
-        parts = re.split(r'[,;]|\s+и\s+', fio_str)
-        result = []
-        for part in parts:
-            part = part.strip()
-            # Убираем роли в скобках
-            part = re.sub(r'\s*\([^)]*\)', '', part)
-            # Убираем лишние пробелы
-            part = re.sub(r'\s+', ' ', part)
-            if part and len(part) > 5:  # Минимальная длина ФИО
-                result.append(part)
-        
-        if len(result) > 1:
-            return result
-    
-    return [fio_string]
-
-
-def expand_group_bookings(df):
-    """
-    Разворачивает групповые бронирования в отдельные строки.
-    Каждый человек получает свою копию строки с тем же комментарием и тарифом.
-    """
-    expanded_rows = []
-    
-    for idx, row in df.iterrows():
-        fio = row.get('ФИО', '')
-        if pd.isna(fio):
-            continue
-        
-        # Разбиваем групповую запись
-        individuals = split_group_booking(fio)
-        
-        if len(individuals) > 1:
-            # Для каждого человека создаем отдельную строку
-            for individual in individuals:
-                new_row = row.copy()
-                new_row['ФИО'] = individual
-                expanded_rows.append(new_row)
-            
-            print(f"Разбита групповая запись '{fio}' на {len(individuals)} человек: {individuals}")
-        else:
-            # Обычная запись
-            expanded_rows.append(row)
-    
-    result_df = pd.DataFrame(expanded_rows)
-    print(f"Развернуто групповых бронирований: {len(df)} -> {len(result_df)} записей")
-    return result_df
 # =========================================================
-# ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ДЛЯ ФИЛЬТРАЦИИ
+# FILTER FUNCTIONS
 # =========================================================
 def filter_rooms_by_floor(rooms, preferred_floor):
-    """Фильтрует комнаты по желаемому этажу"""
     if preferred_floor is None:
         return rooms
     
@@ -915,7 +673,6 @@ def filter_rooms_by_floor(rooms, preferred_floor):
 
 
 def filter_rooms_by_building(rooms, preferred_building):
-    """Фильтрует комнаты по желаемому корпусу"""
     if preferred_building is None:
         return rooms
     
