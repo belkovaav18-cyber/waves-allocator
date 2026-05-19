@@ -681,7 +681,80 @@ def preprocess_guests(df, registration_df=None):
 
     return processed
 
+# =========================================================
+# SPLIT GROUP BOOKINGS (разбиение групповых бронирований)
+# =========================================================
 
+def split_group_booking(fio_string):
+    """
+    Разбивает строку с несколькими ФИО на отдельные записи.
+    Например: "Вьюгинова А.А., Новик А.А., Вьюгинов С.Н." -> список ФИО
+    """
+    if pd.isna(fio_string):
+        return [fio_string]
+    
+    fio_str = str(fio_string)
+    
+    # Разделители: запятая, "и", перевод строки
+    separators = [',', 'и,', 'и', '\n', ';', '/']
+    
+    # Проверяем наличие разделителей
+    has_separator = any(sep in fio_str for sep in separators)
+    
+    if not has_separator:
+        # Проверяем наличие нескольких людей в формате "ФИО1 (роль), ФИО2 (роль)"
+        if '),' in fio_str or ') ,' in fio_str:
+            has_separator = True
+    
+    if has_separator:
+        # Разбиваем по запятым
+        parts = re.split(r'[,;]|\s+и\s+', fio_str)
+        result = []
+        for part in parts:
+            part = part.strip()
+            # Убираем роли в скобках
+            part = re.sub(r'\s*\([^)]*\)', '', part)
+            # Убираем лишние пробелы
+            part = re.sub(r'\s+', ' ', part)
+            if part and len(part) > 5:  # Минимальная длина ФИО
+                result.append(part)
+        
+        if len(result) > 1:
+            return result
+    
+    return [fio_string]
+
+
+def expand_group_bookings(df):
+    """
+    Разворачивает групповые бронирования в отдельные строки.
+    Каждый человек получает свою копию строки с тем же комментарием и тарифом.
+    """
+    expanded_rows = []
+    
+    for idx, row in df.iterrows():
+        fio = row.get('ФИО', '')
+        if pd.isna(fio):
+            continue
+        
+        # Разбиваем групповую запись
+        individuals = split_group_booking(fio)
+        
+        if len(individuals) > 1:
+            # Для каждого человека создаем отдельную строку
+            for individual in individuals:
+                new_row = row.copy()
+                new_row['ФИО'] = individual
+                expanded_rows.append(new_row)
+            
+            print(f"Разбита групповая запись '{fio}' на {len(individuals)} человек: {individuals}")
+        else:
+            # Обычная запись
+            expanded_rows.append(row)
+    
+    result_df = pd.DataFrame(expanded_rows)
+    print(f"Развернуто групповых бронирований: {len(df)} -> {len(result_df)} записей")
+    return result_df
 # =========================================================
 # ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ДЛЯ ФИЛЬТРАЦИИ
 # =========================================================
