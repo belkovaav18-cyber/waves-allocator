@@ -1,7 +1,11 @@
+# sheets.py
+
 import streamlit as st
 import gspread
 import pandas as pd
 from google.oauth2.service_account import Credentials
+from functools import lru_cache
+import time
 
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 
@@ -14,15 +18,24 @@ def connect():
     return gspread.authorize(creds)
 
 
+@st.cache_data(ttl=300, show_spinner=False)  # Кэш на 5 минут
 def load_guests(sheet_id, tab_name="Sheet") -> pd.DataFrame:
-    """Загружает данные из таблицы бронирования"""
-    client = connect()
-    sheet = client.open_by_key(sheet_id).worksheet(tab_name)
-    return pd.DataFrame(sheet.get_all_records())
+    """Загружает данные из таблицы бронирования с кэшированием"""
+    try:
+        client = connect()
+        sheet = client.open_by_key(sheet_id).worksheet(tab_name)
+        data = sheet.get_all_records()
+        df = pd.DataFrame(data)
+        print(f"Загружено {len(df)} записей из бронирования")
+        return df
+    except Exception as e:
+        st.error(f"Ошибка загрузки бронирования: {e}")
+        return pd.DataFrame()
 
 
+@st.cache_data(ttl=300, show_spinner=False)  # Кэш на 5 минут
 def load_registration_data(sheet_id, tab_name="Sheet") -> pd.DataFrame:
-    """Загружает данные из таблицы регистрации"""
+    """Загружает данные из таблицы регистрации с кэшированием"""
     try:
         client = connect()
         sheet = client.open_by_key(sheet_id).worksheet(tab_name)
@@ -52,7 +65,7 @@ def load_registration_data(sheet_id, tab_name="Sheet") -> pd.DataFrame:
         data_rows = all_values[1:]
         df = pd.DataFrame(data_rows, columns=unique_headers)
         
-        # Оставляем только нужные колонки (ищем по частичному совпадению)
+        # Оставляем только нужные колонки
         needed_cols = {
             'surname': 'Фамилия',
             'name': 'Имя',
@@ -72,12 +85,9 @@ def load_registration_data(sheet_id, tab_name="Sheet") -> pd.DataFrame:
         
         if col_mapping:
             df = df[[col_mapping[needed] for needed in col_mapping if needed in col_mapping]]
-            # Переименовываем обратно
             df = df.rename(columns={col_mapping[needed]: needed for needed in col_mapping})
         
         print(f"Загружено {len(df)} записей из таблицы регистрации")
-        print(f"Колонки: {list(df.columns)}")
-        
         return df
         
     except Exception as e:
@@ -101,32 +111,27 @@ def save_results(sheet_id, tab_name, df: pd.DataFrame):
 
 
 def save_results_with_details(sheet_id, tab_name, results_df, original_guests_df):
-    """
-    Сохраняет результаты расселения вместе с тарифом, комментарием.
-    """
+    """Сохраняет результаты расселения"""
     client = connect()
     sh = client.open_by_key(sheet_id)
     
     df_to_save = results_df.copy()
     
-    # Определяем колонку с ФИО (может быть 'fio' или 'ФИО')
     fio_col = 'fio' if 'fio' in df_to_save.columns else 'ФИО'
     
-    # Создаем словари для быстрого поиска тарифа и комментария по ФИО
+    # Создаем словари для быстрого поиска
     tariff_dict = {}
     comment_dict = {}
     
     for idx, row in original_guests_df.iterrows():
         fio = row.get('ФИО', '')
         if fio:
-            # Ищем колонку с тарифом
             tariff_value = ''
             for col in original_guests_df.columns:
                 if 'тариф' in str(col).lower() or 'проживание' in str(col).lower():
                     tariff_value = row.get(col, '')
                     break
             
-            # Ищем колонку с комментарием
             comment_value = ''
             for col in original_guests_df.columns:
                 if 'коммент' in str(col).lower():
@@ -136,11 +141,10 @@ def save_results_with_details(sheet_id, tab_name, results_df, original_guests_df
             tariff_dict[fio] = tariff_value
             comment_dict[fio] = comment_value
     
-    # Добавляем колонки с тарифом и комментарием
     df_to_save['Тариф'] = df_to_save[fio_col].map(tariff_dict).fillna('')
     df_to_save['Комментарий'] = df_to_save[fio_col].map(comment_dict).fillna('')
     
-    # Добавляем возраст и должность, если они есть
+    # Добавляем возраст и должность
     if 'age' in original_guests_df.columns:
         age_dict = dict(zip(original_guests_df['ФИО'], original_guests_df['age']))
         df_to_save['Возраст'] = df_to_save[fio_col].map(age_dict).fillna('')
@@ -149,18 +153,12 @@ def save_results_with_details(sheet_id, tab_name, results_df, original_guests_df
         position_dict = dict(zip(original_guests_df['ФИО'], original_guests_df['position']))
         df_to_save['Должность'] = df_to_save[fio_col].map(position_dict).fillna('')
     
-    if 'organization' in original_guests_df.columns:
-        org_dict = dict(zip(original_guests_df['ФИО'], original_guests_df['organization']))
-        df_to_save['Организация'] = df_to_save[fio_col].map(org_dict).fillna('')
-    
-    # Переставляем колонки в удобном порядке
     columns_order = ['fio', 'room_id', 'room_capacity', 'Дата заезда', 'Дата отъезда', 
-                     'Тариф', 'Комментарий', 'Возраст', 'Должность', 'Организация']
+                     'Тариф', 'Комментарий', 'Возраст', 'Должность']
     existing_columns = [col for col in columns_order if col in df_to_save.columns]
     other_columns = [col for col in df_to_save.columns if col not in existing_columns]
     df_to_save = df_to_save[existing_columns + other_columns]
     
-    # Сохраняем в Google Sheets
     try:
         sheet = sh.worksheet(tab_name)
     except:
