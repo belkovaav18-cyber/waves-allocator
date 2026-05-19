@@ -7,12 +7,13 @@ from openpyxl import load_workbook
 from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
 from openpyxl.utils.dataframe import dataframe_to_rows
 
-from sheets import load_guests, save_results_with_details
+from sheets import load_guests, save_results_with_details, load_registration_data
 from preprocess import preprocess_guests
 from solver_controller import smart_solve
 
 
 SHEET_ID = "1lF4SV24wTo5OwsidQ7UPqBVaGzdw_fBSx0OuBJJ4cWg"
+REGISTRATION_SHEET_ID = "1fHjI0hTtlbjDZxSCWVidzGnJ7aY4joB7UUVXFEB0rxw"
 TAB = "Sheet"
 
 st.title("🏨 Расселение")
@@ -26,8 +27,14 @@ if 'final_result_df' not in st.session_state:
 rooms_df = pd.read_excel("data/rooms.xlsx")
 rooms = rooms_df.to_dict("records")
 
+# Загружаем данные бронирования
 raw = load_guests(SHEET_ID, TAB)
-guests_df = preprocess_guests(raw)
+
+# Загружаем данные регистрации
+registration_df = load_registration_data(REGISTRATION_SHEET_ID, TAB)
+
+# Препроцессинг с обогащением из регистрации
+guests_df = preprocess_guests(raw, registration_df)
 
 
 # =========================================================
@@ -94,6 +101,8 @@ def extract_dates_from_guest(guest_fio, raw_df):
     check_out_str = check_out.strftime("%d.%m.%Y")
     
     return check_in_str, check_out_str
+
+# ... остальной код app.py без изменений ...
 
 
 # =========================================================
