@@ -68,6 +68,12 @@ def is_status_compatible(status1, status2):
 # SOLVER
 # =========================================================
 def solve(guests, rooms):
+        # Отладка: выводим все group_hard
+    print("\n=== GROUP_HARD DEBUG ===")
+    for g in guests:
+        if g.get("group_hard"):
+            print(f"{g['fio']}: hard_group = {g['group_hard']}")
+    print("=======================\n")
     model = cp_model.CpModel()
     G = range(len(guests))
     R = range(len(rooms))
