@@ -1,5 +1,5 @@
 from solver import solve
-from feasibility import find_impossible_groups, split_groups, explain_feasibility
+from feasibility import find_impossible_groups, split_groups
 
 
 def smart_solve(guests, rooms):
