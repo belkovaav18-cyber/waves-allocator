@@ -183,7 +183,7 @@ def solve(guests, rooms):
     # 5. HARD: STATUS COMPATIBILITY (студентов с профессорами нельзя)
     # =====================================================
     for g1 in G:
-        for g2 in range(g1 + 1, G):
+        for g2 in range(g1 + 1, len(guests)):
             if not is_status_compatible(guests[g1].get("status", "student"), 
                                        guests[g2].get("status", "student")):
                 for r in R:
