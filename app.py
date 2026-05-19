@@ -10,7 +10,25 @@ from openpyxl.utils.dataframe import dataframe_to_rows
 from sheets import load_guests, save_results_with_details, load_registration_data
 from preprocess import preprocess_guests
 from solver_controller import smart_solve
+import time
 
+# Добавьте проверку на повторную загрузку
+if 'data_loaded' not in st.session_state:
+    st.session_state.data_loaded = False
+
+if not st.session_state.data_loaded:
+    with st.spinner("Загрузка данных..."):
+        raw = load_guests(SHEET_ID, TAB_NAME)
+        registration_df = load_registration_data(REGISTRATION_SHEET_ID, TAB_NAME)
+        guests_df = preprocess_guests(raw, registration_df)
+        st.session_state.raw = raw
+        st.session_state.registration_df = registration_df
+        st.session_state.guests_df = guests_df
+        st.session_state.data_loaded = True
+else:
+    raw = st.session_state.raw
+    registration_df = st.session_state.registration_df
+    guests_df = st.session_state.guests_df
 SHEET_ID = "1lF4SV24wTo5OwsidQ7UPqBVaGzdw_fBSx0OuBJJ4cWg"
 REGISTRATION_SHEET_ID = "1fHjI0hTtlbjDZxSCWVidzGnJ7aY4joB7UUVXFEB0rxw"
 TAB_NAME = "Sheet"  # Оба листа называются Sheet
