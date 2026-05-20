@@ -35,7 +35,7 @@ class RoomAllocator:
                 guest['comment_text'] = ''
             
             # Проверяем, является ли гость членом программного комитета
-            guest_fio = guest.get('ФИО', '')
+            guest_fio = guest.get('ФИО', guest.get('fio', ''))
             normalized_guest = self._normalize_name(guest_fio)
             
             is_pc = False
@@ -55,9 +55,7 @@ class RoomAllocator:
         """Нормализация имени для сравнения"""
         if not name:
             return ""
-        # Убираем инициалы и приводим к нижнему регистру
         name = str(name).lower()
-        # Убираем точки и пробелы
         name = name.replace('.', '').replace(' ', '')
         return name
     
@@ -73,37 +71,41 @@ class RoomAllocator:
         """Получить комнаты определенной вместимости"""
         return [r for r in self.rooms if r['вместимость'] == capacity]
     
+    def _get_guest_name(self, guest):
+        """Получить имя гостя из разных возможных ключей"""
+        return guest.get('ФИО', guest.get('fio', ''))
+    
     def allocate_pc_members(self):
         """Расселить членов программного комитета"""
         allocations = []
         single_rooms = self._get_single_rooms()
         
         for i, guest in enumerate(self.pc_members):
+            guest_name = self._get_guest_name(guest)
             if i < len(single_rooms):
                 room = single_rooms[i]
                 allocations.append({
-                    'fio': guest['ФИО'],
+                    'ФИО': guest_name,
                     'room_id': room['room_id'],
                     'room_capacity': room['вместимость'],
-                    'comment': guest['comment_text']
+                    'comment': guest.get('comment_text', '')
                 })
             else:
-                # Если одноместных комнат не хватает, селим в двухместные (по одному)
                 double_rooms = self._get_double_rooms()
                 if i - len(single_rooms) < len(double_rooms):
                     room = double_rooms[i - len(single_rooms)]
                     allocations.append({
-                        'fio': guest['ФИО'],
+                        'ФИО': guest_name,
                         'room_id': room['room_id'],
                         'room_capacity': room['вместимость'],
-                        'comment': guest['comment_text']
+                        'comment': guest.get('comment_text', '')
                     })
                 else:
                     allocations.append({
-                        'fio': guest['ФИО'],
+                        'ФИО': guest_name,
                         'room_id': 'не размещен',
                         'room_capacity': 0,
-                        'comment': guest['comment_text']
+                        'comment': guest.get('comment_text', '')
                     })
         
         return allocations
@@ -113,7 +115,6 @@ class RoomAllocator:
         if not guests:
             return []
         
-        # Группируем по городам
         city_groups = defaultdict(list)
         for guest in guests:
             city = guest.get('город', 'не указан')
@@ -122,17 +123,12 @@ class RoomAllocator:
         allocations = []
         used_rooms = set()
         double_rooms = self._get_double_rooms()
-        
-        # Сортируем комнаты по вместимости
         double_rooms = sorted(double_rooms, key=lambda x: x['room_id'])
         
         for city, city_guests in city_groups.items():
-            # Сортируем гостей по возрасту
             city_guests.sort(key=lambda x: x.get('возраст', 0) or 0)
             
-            # Разбиваем на пары
             for i in range(0, len(city_guests), 2):
-                # Ищем свободную комнату
                 room = None
                 for r in double_rooms:
                     if r['room_id'] not in used_rooms:
@@ -140,24 +136,22 @@ class RoomAllocator:
                         break
                 
                 if room is None:
-                    # Нет свободных комнат
                     for guest in city_guests[i:i+2]:
                         allocations.append({
-                            'fio': guest['ФИО'],
+                            'ФИО': self._get_guest_name(guest),
                             'room_id': 'нет мест',
                             'room_capacity': 0,
-                            'comment': guest['comment_text']
+                            'comment': guest.get('comment_text', '')
                         })
                 else:
                     used_rooms.add(room['room_id'])
-                    # Селем пару или одного человека
                     pair = city_guests[i:i+2]
                     for guest in pair:
                         allocations.append({
-                            'fio': guest['ФИО'],
+                            'ФИО': self._get_guest_name(guest),
                             'room_id': room['room_id'],
                             'room_capacity': room['вместимость'],
-                            'comment': guest['comment_text']
+                            'comment': guest.get('comment_text', '')
                         })
         
         return allocations
@@ -168,10 +162,10 @@ class RoomAllocator:
         
         for guest in guests:
             allocations.append({
-                'fio': guest['ФИО'],
+                'ФИО': self._get_guest_name(guest),
                 'room_id': 'требуется ручная обработка',
                 'room_capacity': 0,
-                'comment': guest['comment_text'],
+                'comment': guest.get('comment_text', ''),
                 'comment_priority': True
             })
         
@@ -181,15 +175,12 @@ class RoomAllocator:
         """Основной метод расселения"""
         all_allocations = []
         
-        # 1. Расселяем членов программного комитета
         pc_allocations = self.allocate_pc_members()
         all_allocations.extend(pc_allocations)
         
-        # 2. Обрабатываем гостей с комментариями
         comment_allocations = self.allocate_with_comments(self.comment_guests)
         all_allocations.extend(comment_allocations)
         
-        # 3. Расселяем остальных по городам и возрасту
         regular_allocations = self.allocate_by_city_and_age(self.regular_guests)
         all_allocations.extend(regular_allocations)
         
@@ -199,9 +190,9 @@ class RoomAllocator:
         """Получить отладочную информацию"""
         return {
             'pc_members_count': len(self.pc_members),
-            'pc_members': [g['ФИО'] for g in self.pc_members],
+            'pc_members': [self._get_guest_name(g) for g in self.pc_members],
             'comment_guests_count': len(self.comment_guests),
-            'comment_guests': [{'fio': g['ФИО'], 'comment': g['comment_text']} for g in self.comment_guests],
+            'comment_guests': [{'fio': self._get_guest_name(g), 'comment': g['comment_text']} for g in self.comment_guests],
             'regular_guests_count': len(self.regular_guests),
             'single_rooms_count': len(self._get_single_rooms()),
             'double_rooms_count': len(self._get_double_rooms())
