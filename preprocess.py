@@ -66,6 +66,43 @@ def normalize_fio(fio):
         return f"{parts[0]} {parts[1]}"  # Фамилия + Имя
     return normalized
 
+def is_resident(guest_row):
+    """
+    Определяет, является ли гость резидентом (нуждается в проживании)
+    Проверяет:
+    1. Отметки в колонках с "Комната" и "ночь"
+    2. Выбор тарифа за проживание (если написано "Не буду проживать" - то не резидент)
+    """
+    # Проверяем колонку с тарифом
+    tariff_col = None
+    for col in guest_row.index:
+        if 'Выбор тарифа за проживание' in str(col):
+            tariff_col = col
+            break
+    
+    if tariff_col is not None:
+        tariff_value = guest_row.get(tariff_col, '')
+        if pd.notna(tariff_value) and str(tariff_value).strip():
+            tariff_str = str(tariff_value).lower()
+            # Если явно отказался от проживания
+            if 'не буду проживать' in tariff_str or 'не проживаю' in tariff_str or 'не нуждаюсь' in tariff_str:
+                return False
+    
+    # Проверяем отметки в колонках с комнатами
+    has_room = False
+    for col in guest_row.index:
+        col_str = str(col)
+        if 'Комната' in col_str and 'ночь' in col_str:
+            value = guest_row.get(col, '')
+            if pd.notna(value) and str(value).strip():
+                val_str = str(value).strip().lower()
+                # Если значение не пустое, не "нет", не "-", не "false"
+                if val_str not in ['', 'нет', '-', 'false', 'nan', 'не буду проживать']:
+                    has_room = True
+                    break
+    
+    return has_room
+
 def preprocess_guests(raw_df, registration_df):
     """
     Объединяет данные из таблицы бронирования и регистрации
@@ -97,6 +134,14 @@ def preprocess_guests(raw_df, registration_df):
         guest_fio = guest_row.get('ФИО', '')
         if pd.isna(guest_fio) or guest_fio == "":
             guests_df.loc[idx, 'resident'] = False
+            continue
+        
+        # ОПРЕДЕЛЯЕМ, РЕЗИДЕНТ ЛИ ГОСТЬ
+        is_res = is_resident(guest_row)
+        guests_df.loc[idx, 'resident'] = is_res
+        
+        # Если гость не резидент, пропускаем поиск в регистрации
+        if not is_res:
             continue
         
         normalized_guest = normalize_fio(guest_fio)
@@ -134,9 +179,6 @@ def preprocess_guests(raw_df, registration_df):
             
             # Удаляем из словаря, чтобы не использовать повторно
             del registration_dict[best_match_key]
-        else:
-            # Гость не найден в регистрации - нерезидент
-            guests_df.loc[idx, 'resident'] = False
     
     # Добавляем колонку с комментарием (уже есть в raw_df)
     if 'Комментарий (например, пожелания по расселению)' in guests_df.columns:
