@@ -1,430 +1,215 @@
-from ortools.sat.python import cp_model
 import pandas as pd
-from config import WEIGHTS
+import numpy as np
+from itertools import combinations
+from collections import defaultdict
 
-
-# =========================================================
-# COST
-# =========================================================
-def conflict_cost(a, b):
-    cost = 0
-
-    if a["gender"] != b["gender"]:
-        cost += WEIGHTS["gender_conflict"]
-
-    if a.get("city") != b.get("city"):
-        cost += WEIGHTS["city_diff"]
-
-    if a.get("status") != b.get("status"):
-        cost += WEIGHTS["status_diff"]
-    
-    age_a = a.get("age")
-    age_b = b.get("age")
-    if age_a and age_b:
-        age_diff = abs(age_a - age_b)
-        if age_diff > 10:
-            cost += 100
-        elif age_diff > 5:
-            cost += 50
-
-    return cost
-
-
-# =========================================================
-# HELPER FUNCTIONS
-# =========================================================
-def get_floor_from_room_id(room_id):
-    room_str = str(room_id)
-    if '-' in room_str:
-        after_hyphen = room_str.split('-')[1]
-        if after_hyphen and after_hyphen[0].isdigit():
-            return int(after_hyphen[0])
-    digits = ''.join(filter(str.isdigit, room_str))
-    if digits and digits[0].isdigit():
-        return int(digits[0])
-    return None
-
-
-def get_building_from_room_id(room_id):
-    room_str = str(room_id)
-    if '-' in room_str:
-        building = room_str.split('-')[0]
-        if building.isdigit():
-            return int(building)
-    return None
-
-
-def is_status_compatible(status1, status2):
-    status_hierarchy = {
-        'student': 1, 'postgraduate': 2, 'assistant': 3,
-        'docent': 4, 'professor': 5, 'academician': 5
-    }
-    level1 = status_hierarchy.get(status1, 0)
-    level2 = status_hierarchy.get(status2, 0)
-    return abs(level1 - level2) <= 2
-
-
-# =========================================================
-# SOLVER
-# =========================================================
-def solve(guests, rooms):
-    # Отладка: выводим все group_hard
-    print("\n=== GROUP_HARD DEBUG ===")
-    for g in guests:
-        if g.get("group_hard"):
-            print(f"{g['fio']}: hard_group = {g['group_hard']}")
-    print("=======================\n")
-    
-    # Отладка: выводим вместимость комнат
-    print("\n=== ROOMS CAPACITY ===")
-    for r in rooms:
-        print(f"{r['room_id']}: capacity = {r['вместимость']}")
-    print("======================\n")
-    
-    model = cp_model.CpModel()
-    G = range(len(guests))
-    R = range(len(rooms))
-    x = {}
-
-    # VARIABLES
-    for g in G:
-        for r in R:
-            x[g, r] = model.NewBoolVar(f"x_{g}_{r}")
-
-    # ONE ROOM PER GUEST
-    for g in G:
-        model.Add(sum(x[g, r] for r in R) == 1)
-
-    # CAPACITY - ЖЕСТКОЕ ОГРАНИЧЕНИЕ
-    for r in R:
-        cap = int(rooms[r]["вместимость"])
-        model.Add(sum(x[g, r] for g in G) <= cap)
-
-    objective = []
-
-    # =====================================================
-    # HARD CONSTRAINTS
-    # =====================================================
-
-    # 1. MUST BE SINGLE ROOM
-    for g in G:
-        if guests[g].get("must_be_single_room", False):
-            for r in R:
-                if int(rooms[r]["вместимость"]) != 1:
-                    model.Add(x[g, r] == 0)
-
-    # 2. FORCED YELLOW BUILDING
-    for g in G:
-        if guests[g].get("preferred_building") == "yellow":
-            for r in R:
-                building = get_building_from_room_id(rooms[r]["room_id"])
-                if building != 2:
-                    model.Add(x[g, r] == 0)
-
-    # 3. TOGETHER GROUPS (HARD)
-    for g in G:
-        for other_fio in guests[g].get("group_hard", []):
-            if other_fio in ["NO_SUBLEASE", "MUST_BE_SINGLE"]:
-                continue
-            for h in G:
-                if guests[h]["fio"] != other_fio:
-                    continue
-                for r in R:
-                    model.Add(x[g, r] == x[h, r])
-
-    # 4. NO SUBLEASE
-    for g in G:
-        if guests[g].get("require_no_subleaser", False):
-            for r in R:
-                cap = int(rooms[r]["вместимость"])
-                if cap == 2:
-                    model.Add(sum(x[k, r] for k in G) <= 1).OnlyEnforceIf(x[g, r])
-
-    # 5. STATUS COMPATIBILITY
-    for g1 in G:
-        for g2 in range(g1 + 1, len(guests)):
-            if not is_status_compatible(guests[g1].get("status", "student"), 
-                                       guests[g2].get("status", "student")):
-                for r in R:
-                    model.Add(x[g1, r] + x[g2, r] <= 1)
-
-    # 6. GENDER SEPARATION
-    together_pairs = set()
-    for g in G:
-        for other_fio in guests[g].get("group_hard", []):
-            if other_fio in ["NO_SUBLEASE", "MUST_BE_SINGLE"]:
-                continue
-            for h in G:
-                if guests[h]["fio"] == other_fio:
-                    together_pairs.add((min(g, h), max(g, h)))
+class RoomAllocator:
+    def __init__(self, rooms, guests):
+        self.rooms = rooms
+        self.guests = guests
+        self.room_capacity = {r['room_id']: r['вместимость'] for r in rooms}
+        self.room_corpus = {r['room_id']: r.get('корпус', str(r['room_id'])[0] if '-' in str(r['room_id']) else '1') for r in rooms}
+        
+        # Список программного комитета
+        self.program_committee = [
+            "Козарь А.В.", "Калиш А.Н.", "Архипов Р.М.", "Балакший В.И.",
+            "Белотелов В.И.", "Боголюбов А.Н.", "Бородачев Л.В.", "Бугай А.Н.",
+            "Денисов В.И.", "Звездин А.К.", "Игнатьева Д.О.", "Короновский А.А.",
+            "Котова С.П.", "Макаров В.А.", "Пирогов Ю.А.", "Пятаков А.П.",
+            "Руденко О.В.", "Сазонов С.В.", "Сапожников О.А.", "Тимофеев И.В.",
+            "Храмов А.Е.", "Цысарь С.А.", "Чашечкин Ю.Д.", "Черепенин В.А.",
+            "Шандаров С.М."
+        ]
+        
+        # Нормализованные имена для проверки
+        self.pc_normalized = [self._normalize_name(name) for name in self.program_committee]
+        
+        # Разделяем гостей на категории
+        self.pc_members = []
+        self.comment_guests = []
+        self.regular_guests = []
+        
+        for guest in guests:
+            guest['comment_text'] = guest.get('comment', '')
+            if pd.isna(guest['comment_text']):
+                guest['comment_text'] = ''
+            
+            # Проверяем, является ли гость членом программного комитета
+            guest_fio = guest.get('ФИО', '')
+            normalized_guest = self._normalize_name(guest_fio)
+            
+            is_pc = False
+            for pc_name in self.pc_normalized:
+                if pc_name in normalized_guest or normalized_guest in pc_name:
+                    is_pc = True
                     break
-
-    for g1 in G:
-        for g2 in range(g1 + 1, len(guests)):
-            gender1 = guests[g1].get("gender")
-            gender2 = guests[g2].get("gender")
             
-            if gender1 != gender2:
-                requested_together = (g1, g2) in together_pairs
-                if not requested_together:
-                    for r in R:
-                        model.Add(x[g1, r] + x[g2, r] <= 1)
-
-    # =====================================================
-    # SOFT CONSTRAINTS
-    # =====================================================
-
-    # SOFT 1: COUPLE LOGIC
-    for g in G:
-        hard_group = guests[g].get("group_hard", [])
-        req = guests[g].get("room_type")
-        if len(hard_group) != 1 or req != 2:
-            continue
-        partner_fio = hard_group[0]
-        for h in G:
-            if guests[h]["fio"] != partner_fio:
-                continue
-            for r in R:
-                if int(rooms[r]["вместимость"]) != 2:
-                    continue
-                both = model.NewBoolVar(f"couple_{g}_{h}_{r}")
-                model.Add(both <= x[g, r])
-                model.Add(both <= x[h, r])
-                model.Add(both >= x[g, r] + x[h, r] - 1)
-                model.Add(sum(x[k, r] for k in G) <= 2).OnlyEnforceIf(both)
-
-    # SOFT 2: SOFT GROUPS
-    for g in G:
-        for other_fio in guests[g].get("group_soft", []):
-            for h in G:
-                if guests[h]["fio"] != other_fio:
-                    continue
-                for r in R:
-                    t = model.NewBoolVar(f"soft_{g}_{h}_{r}")
-                    model.Add(t <= x[g, r])
-                    model.Add(t <= x[h, r])
-                    model.Add(t >= x[g, r] + x[h, r] - 1)
-                    objective.append(-50 * t)
-
-    # SOFT 3: AVOID GROUPS
-    for g in G:
-        for other_fio in guests[g].get("group_avoid", []):
-            for h in G:
-                if guests[h]["fio"] != other_fio:
-                    continue
-                for r in R:
-                    t = model.NewBoolVar(f"avoid_{g}_{h}_{r}")
-                    model.Add(t <= x[g, r])
-                    model.Add(t <= x[h, r])
-                    model.Add(t >= x[g, r] + x[h, r] - 1)
-                    objective.append(100 * t)
-
-    # SOFT 4: RED BUILDING
-    for g in G:
-        if guests[g].get("preferred_building") == "red":
-            for r in R:
-                building = get_building_from_room_id(rooms[r]["room_id"])
-                if building != 1:
-                    penalty = model.NewBoolVar(f"red_building_penalty_{g}_{r}")
-                    model.Add(penalty == x[g, r])
-                    objective.append(40 * penalty)
-
-    # SOFT 5: PREFERRED FLOOR
-    for g in G:
-        preferred_floor = guests[g].get("preferred_floor")
-        if preferred_floor is not None:
-            for r in R:
-                room_floor = get_floor_from_room_id(rooms[r]["room_id"])
-                if room_floor != preferred_floor:
-                    penalty = model.NewBoolVar(f"floor_penalty_{g}_{r}")
-                    model.Add(penalty == x[g, r])
-                    objective.append(25 * penalty)
-
-    # SOFT 6: AGE SIMILARITY
-    for g1 in G:
-        for g2 in range(g1 + 1, len(guests)):
-            age1 = guests[g1].get("age")
-            age2 = guests[g2].get("age")
-            if age1 and age2 and abs(age1 - age2) <= 5:
-                for r in R:
-                    t = model.NewBoolVar(f"age_similar_{g1}_{g2}_{r}")
-                    model.Add(t <= x[g1, r])
-                    model.Add(t <= x[g2, r])
-                    model.Add(t >= x[g1, r] + x[g2, r] - 1)
-                    objective.append(-20 * t)
-
-    # SOFT 7: STATUS SIMILARITY
-    for g1 in G:
-        for g2 in range(g1 + 1, len(guests)):
-            status1 = guests[g1].get("status", "student")
-            status2 = guests[g2].get("status", "student")
-            if status1 == status2:
-                for r in R:
-                    t = model.NewBoolVar(f"status_similar_{g1}_{g2}_{r}")
-                    model.Add(t <= x[g1, r])
-                    model.Add(t <= x[g2, r])
-                    model.Add(t >= x[g1, r] + x[g2, r] - 1)
-                    objective.append(-15 * t)
-
-    # SOFT 8: CONFLICTS
-    for g1 in G:
-        for g2 in range(g1 + 1, len(guests)):
-            cost = conflict_cost(guests[g1], guests[g2])
-            if cost == 0:
-                continue
-            for r in R:
-                p = model.NewBoolVar(f"pair_{g1}_{g2}_{r}")
-                model.Add(p <= x[g1, r])
-                model.Add(p <= x[g2, r])
-                model.Add(p >= x[g1, r] + x[g2, r] - 1)
-                objective.append(cost * p)
-
-    # SOFT 9: ROOM TYPE MISMATCH
-    for g in G:
-        req = guests[g].get("room_type")
-        if req is None:
-            continue
-        for r in R:
-            cap = int(rooms[r]["вместимость"])
-            if cap != req:
-                penalty = model.NewBoolVar(f"room_penalty_{g}_{r}")
-                model.Add(penalty == x[g, r])
-                objective.append(50 * penalty)
-
-    # SOFT 10: ALTERNATIVE VARIANTS
-    for g in G:
-        variants = guests[g].get("allocation_variants", [])
-        for variant in variants:
-            room_type = variant.get("room_type")
-            group_fios = variant.get("group", [])
-            priority = variant.get("priority", 1)
-            
-            group_indices = []
-            for h in G:
-                if guests[h]["fio"] in group_fios:
-                    group_indices.append(h)
-            
-            if len(group_indices) != len(group_fios):
-                continue
-            
-            weight = -100 if priority == 1 else -50
-            
-            for r in R:
-                cap = int(rooms[r]["вместимость"])
-                if cap != room_type:
-                    continue
-                
-                all_together = model.NewBoolVar(f"variant_{g}_{r}")
-                constraints = [x[h, r] for h in group_indices]
-                model.Add(sum(constraints) == len(group_indices)).OnlyEnforceIf(all_together)
-                model.Add(sum(constraints) < len(group_indices)).OnlyEnforceIf(all_together.Not())
-                objective.append(weight * all_together)
-
-    # SOLVE
-    model.Minimize(sum(objective))
-    solver = cp_model.CpSolver()
-    solver.parameters.max_time_in_seconds = 30
-    solver.parameters.log_search_progress = False
-    status = solver.Solve(model)
-
-    if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-        print("No solution found!")
-        return pd.DataFrame([{"error": "no solution"}])
-
-    # Проверяем вместимость комнат в решении
-    room_occupancy = {}
-    for r in R:
-        room_id = rooms[r]["room_id"]
-        room_occupancy[room_id] = 0
+            if is_pc:
+                self.pc_members.append(guest)
+            elif guest['comment_text'] and str(guest['comment_text']).strip():
+                self.comment_guests.append(guest)
+            else:
+                self.regular_guests.append(guest)
     
-    for g in G:
-        for r in R:
-            if solver.Value(x[g, r]):
-                room_id = rooms[r]["room_id"]
-                room_occupancy[room_id] += 1
+    def _normalize_name(self, name):
+        """Нормализация имени для сравнения"""
+        if not name:
+            return ""
+        # Убираем инициалы и приводим к нижнему регистру
+        name = str(name).lower()
+        # Убираем точки и пробелы
+        name = name.replace('.', '').replace(' ', '')
+        return name
     
-    print("\n=== FINAL ROOM OCCUPANCY ===")
-    for room_id, count in room_occupancy.items():
-        capacity = next((r["вместимость"] for r in rooms if r["room_id"] == room_id), 0)
-        status_icon = "✅" if count <= capacity else "❌"
-        print(f"{status_icon} {room_id}: {count}/{capacity}")
-        if count > capacity:
-            print(f"    ВНИМАНИЕ! Комната {room_id} переполнена!")
-    print("============================\n")
-
-    result = []
-    for g in G:
-        for r in R:
-            if solver.Value(x[g, r]):
-                result.append({
-                    "fio": guests[g]["fio"],
-                    "room_id": rooms[r]["room_id"],
-                    "room_capacity": rooms[r]["вместимость"],
-                    "age": guests[g].get("age"),
-                    "status": guests[g].get("status"),
-                    "position": guests[g].get("position")
+    def _get_single_rooms(self):
+        """Получить список одноместных комнат"""
+        return [r for r in self.rooms if r['вместимость'] == 1]
+    
+    def _get_double_rooms(self):
+        """Получить список двухместных комнат"""
+        return [r for r in self.rooms if r['вместимость'] == 2]
+    
+    def _get_rooms_by_capacity(self, capacity):
+        """Получить комнаты определенной вместимости"""
+        return [r for r in self.rooms if r['вместимость'] == capacity]
+    
+    def allocate_pc_members(self):
+        """Расселить членов программного комитета"""
+        allocations = []
+        single_rooms = self._get_single_rooms()
+        
+        for i, guest in enumerate(self.pc_members):
+            if i < len(single_rooms):
+                room = single_rooms[i]
+                allocations.append({
+                    'fio': guest['ФИО'],
+                    'room_id': room['room_id'],
+                    'room_capacity': room['вместимость'],
+                    'comment': guest['comment_text']
                 })
+            else:
+                # Если одноместных комнат не хватает, селим в двухместные (по одному)
+                double_rooms = self._get_double_rooms()
+                if i - len(single_rooms) < len(double_rooms):
+                    room = double_rooms[i - len(single_rooms)]
+                    allocations.append({
+                        'fio': guest['ФИО'],
+                        'room_id': room['room_id'],
+                        'room_capacity': room['вместимость'],
+                        'comment': guest['comment_text']
+                    })
+                else:
+                    allocations.append({
+                        'fio': guest['ФИО'],
+                        'room_id': 'не размещен',
+                        'room_capacity': 0,
+                        'comment': guest['comment_text']
+                    })
+        
+        return allocations
+    
+    def allocate_by_city_and_age(self, guests):
+        """Расселить гостей по городам и возрасту"""
+        if not guests:
+            return []
+        
+        # Группируем по городам
+        city_groups = defaultdict(list)
+        for guest in guests:
+            city = guest.get('город', 'не указан')
+            city_groups[city].append(guest)
+        
+        allocations = []
+        used_rooms = set()
+        double_rooms = self._get_double_rooms()
+        
+        # Сортируем комнаты по вместимости
+        double_rooms = sorted(double_rooms, key=lambda x: x['room_id'])
+        
+        for city, city_guests in city_groups.items():
+            # Сортируем гостей по возрасту
+            city_guests.sort(key=lambda x: x.get('возраст', 0) or 0)
+            
+            # Разбиваем на пары
+            for i in range(0, len(city_guests), 2):
+                # Ищем свободную комнату
+                room = None
+                for r in double_rooms:
+                    if r['room_id'] not in used_rooms:
+                        room = r
+                        break
+                
+                if room is None:
+                    # Нет свободных комнат
+                    for guest in city_guests[i:i+2]:
+                        allocations.append({
+                            'fio': guest['ФИО'],
+                            'room_id': 'нет мест',
+                            'room_capacity': 0,
+                            'comment': guest['comment_text']
+                        })
+                else:
+                    used_rooms.add(room['room_id'])
+                    # Селем пару или одного человека
+                    pair = city_guests[i:i+2]
+                    for guest in pair:
+                        allocations.append({
+                            'fio': guest['ФИО'],
+                            'room_id': room['room_id'],
+                            'room_capacity': room['вместимость'],
+                            'comment': guest['comment_text']
+                        })
+        
+        return allocations
+    
+    def allocate_with_comments(self, guests):
+        """Обработать гостей с комментариями"""
+        allocations = []
+        
+        for guest in guests:
+            allocations.append({
+                'fio': guest['ФИО'],
+                'room_id': 'требуется ручная обработка',
+                'room_capacity': 0,
+                'comment': guest['comment_text'],
+                'comment_priority': True
+            })
+        
+        return allocations
+    
+    def solve(self):
+        """Основной метод расселения"""
+        all_allocations = []
+        
+        # 1. Расселяем членов программного комитета
+        pc_allocations = self.allocate_pc_members()
+        all_allocations.extend(pc_allocations)
+        
+        # 2. Обрабатываем гостей с комментариями
+        comment_allocations = self.allocate_with_comments(self.comment_guests)
+        all_allocations.extend(comment_allocations)
+        
+        # 3. Расселяем остальных по городам и возрасту
+        regular_allocations = self.allocate_by_city_and_age(self.regular_guests)
+        all_allocations.extend(regular_allocations)
+        
+        return pd.DataFrame(all_allocations)
+    
+    def get_debug_info(self):
+        """Получить отладочную информацию"""
+        return {
+            'pc_members_count': len(self.pc_members),
+            'pc_members': [g['ФИО'] for g in self.pc_members],
+            'comment_guests_count': len(self.comment_guests),
+            'comment_guests': [{'fio': g['ФИО'], 'comment': g['comment_text']} for g in self.comment_guests],
+            'regular_guests_count': len(self.regular_guests),
+            'single_rooms_count': len(self._get_single_rooms()),
+            'double_rooms_count': len(self._get_double_rooms())
+        }
 
-    return pd.DataFrame(result)
-
-
-def smart_solve(guests, rooms):
-    """Обертка для solve с обработкой ошибок и отладкой"""
-    debug = {
-        "total_guests": len(guests),
-        "total_rooms": len(rooms),
-        "must_be_single": [],
-        "yellow_building_people": [],
-        "red_building_people": [],
-        "no_subleaser_people": [],
-        "together_requests": [],
-        "tariff_stats": {"without_subleaser": 0, "with_subleaser": 0},
-        "status_stats": {"student": 0, "postgraduate": 0, "professor": 0, "other": 0},
-        "age_stats": {"min": None, "max": None, "avg": None}
-    }
-    
-    ages = []
-    for guest in guests:
-        if guest.get("must_be_single_room"):
-            debug["must_be_single"].append(guest["fio"])
-        if guest.get("preferred_building") == "yellow":
-            debug["yellow_building_people"].append(guest["fio"])
-        elif guest.get("preferred_building") == "red":
-            debug["red_building_people"].append(guest["fio"])
-        if guest.get("require_no_subleaser"):
-            debug["no_subleaser_people"].append(guest["fio"])
-        if guest.get("group_hard"):
-            for h in guest["group_hard"]:
-                if h not in ["NO_SUBLEASE", "MUST_BE_SINGLE"]:
-                    debug["together_requests"].append(f"{guest['fio']} с {h}")
-        tariff_type = guest.get("tariff_type")
-        if tariff_type == "without_subleaser":
-            debug["tariff_stats"]["without_subleaser"] += 1
-        elif tariff_type == "with_subleaser":
-            debug["tariff_stats"]["with_subleaser"] += 1
-        status = guest.get("status", "other")
-        debug["status_stats"][status] = debug["status_stats"].get(status, 0) + 1
-        age = guest.get("age")
-        if age:
-            ages.append(age)
-    
-    if ages:
-        debug["age_stats"]["min"] = min(ages)
-        debug["age_stats"]["max"] = max(ages)
-        debug["age_stats"]["avg"] = sum(ages) / len(ages)
-    
-    print("\n" + "="*50)
-    print("DEBUG INFO")
-    print("="*50)
-    print(f"Total guests: {debug['total_guests']}")
-    print(f"Must be single: {len(debug['must_be_single'])}")
-    print(f"Yellow building forced: {len(debug['yellow_building_people'])}")
-    print(f"No sublease required: {len(debug['no_subleaser_people'])}")
-    print(f"Together requests: {len(debug['together_requests'])}")
-    print(f"Tariff stats: {debug['tariff_stats']}")
-    print(f"Status stats: {debug['status_stats']}")
-    print(f"Age stats: {debug['age_stats']}")
-    print("="*50 + "\n")
-    
-    result_df = solve(guests, rooms)
-    return result_df, debug
+def solve_allocation(guests, rooms):
+    """Основная функция расселения"""
+    allocator = RoomAllocator(rooms, guests)
+    result_df = allocator.solve()
+    debug_info = allocator.get_debug_info()
+    return result_df, debug_info
