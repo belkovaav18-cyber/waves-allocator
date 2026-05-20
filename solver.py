@@ -102,24 +102,48 @@ class RoomAllocator:
             "Коньков", "Отинова", "Юшков", "Кукушкин", "Левкин", "Трунцов"
         ]
         
-        # Предопределенные группы
-        self.predefined_groups = [
-            {'guests': ['Вьюгинова Алена Александровна (докладчик), Новик Александр Александрович (сопровожд.), Вьюгинов Сергей Николаевич (сопровожд.)',
-                        'Новик Александр Александрович', 'Вьюгинов Сергей Николаевич'], 'size': 3},
-            {'guests': ['Очиров Артем Александрович', 'Белоножко Дмитрий Федорович'], 'size': 2},
-            {'guests': ['Толстых Алина Дмитриевна', 'Очкина Варвара Алексеевна', 'Манышева Анна Андреевна'], 'size': 3},
-            {'guests': ['Камчатнов Анатолий Михайлович', 'Камчатнова Валентина Александровна'], 'size': 2},
-            {'guests': ['Балуян Тигран Григорьевич', 'Попкова Анна Андреевна'], 'size': 2},
-            {'guests': ['Сапожников Максим Викторович', 'Сапожникова Мария Александровна'], 'size': 2},
-            {'guests': ['Мороков Егор Степанович', 'Володарский Александр Борисович'], 'size': 2},
-            {'guests': ['Евсеев Дмитрий Александрович', 'Лапин Виктор Анатольевич'], 'size': 2},
-            {'guests': ['Федулов Игорь Николаевич', 'Ковалёв Александр Александрович'], 'size': 2},
-            {'guests': ['Солянов Алексей Александрович', 'Яснев Никита Юрьевич'], 'size': 2},
-            {'guests': ['Ким Пётр Николаевич', 'Пыхтин Дмитрий Алексеевич'], 'size': 2},
-            {'guests': ['Брулев Артем Игоревич', 'Горшков Артём Александрович'], 'size': 2},
-            {'guests': ['Калиш Андрей Николаевич', 'Цысарь Сергей Алексеевич'], 'size': 2},
-            {'guests': ['Юровская Софья Константиновна', 'Булдакова Анастасия Вячеславовна'], 'size': 2}
-        ]
+        # 1. Предопределенные группы (пары и тройки)
+for group in self.predefined_groups:
+    group_guests = [g for g in group['guests'] if g in self.guest_info and g not in allocated]
+    if not group_guests:
+        continue
+    
+    group_size = len(group_guests)
+    
+    # Проверяем, нужна ли трехместная комната
+    min_capacity_needed = group_size  # Минимум вместимость = размер группы
+    
+    # Ищем комнату подходящего размера
+    room = None
+    
+    # Для группы из 3 человек - сначала ищем 3-местные комнаты
+    if group_size >= 3:
+        capacities_to_try = [3, 4, 2]  # 3-местные, потом 4-местные, потом 2-местные (но это плохо)
+    else:
+        capacities_to_try = [group_size, 2, 3, 4]
+    
+    for cap in capacities_to_try:
+        rooms_avail = self._get_rooms_by_capacity(cap, exclude=used_rooms)
+        if rooms_avail:
+            # Проверяем, что комната не будет переполнена
+            room_candidate = rooms_avail[0]
+            if room_candidate['вместимость'] >= group_size:
+                room = room_candidate
+                break
+    
+    if room:
+        used_rooms.add(room['room_id'])
+        for guest in group_guests:
+            self._add_allocation(allocations, guest, room)
+            allocated.add(guest)
+        # Отладочный вывод
+        print(f"Группа {group_guests} ({group_size} чел) заселена в {room['room_id']} (вм:{room['вместимость']})")
+    else:
+        # Не найдена подходящая комната
+        for guest in group_guests:
+            self._add_allocation(allocations, guest, None)
+            allocated.add(guest)
+        st.warning(f"Не найдена комната для группы {len(group_guests)} человек: {group_guests}")
         
         # Сбор информации о гостях
         self.guest_info = {}
