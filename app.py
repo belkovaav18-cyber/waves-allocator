@@ -14,7 +14,7 @@ from comment_engine import process_comments, display_comments_report
 from feasibility import check_feasibility, display_feasibility_report
 
 # =========================================================
-# КОНСТАНТЫ (ОПРЕДЕЛЯЕМ В САМОМ НАЧАЛЕ)
+# КОНСТАНТЫ
 # =========================================================
 SHEET_ID = "1lF4SV24wTo5OwsidQ7UPqBVaGzdw_fBSx0OuBJJ4cWg"
 REGISTRATION_SHEET_ID = "1fHjI0hTtlbjDZxSCWVidzGnJ7aY4joB7UUVXFEB0rxw"
@@ -30,18 +30,21 @@ if 'final_result_df' not in st.session_state:
     st.session_state.final_result_df = None
 if 'data_loaded' not in st.session_state:
     st.session_state.data_loaded = False
+if 'edit_mode' not in st.session_state:
+    st.session_state.edit_mode = False
 
 # Загрузка комнат
 try:
     rooms_df = pd.read_excel("data/rooms.xlsx")
     rooms = rooms_df.to_dict("records")
-    st.success(f"✅ Загружено {len(rooms)} комнат")
+    # Создаем список всех комнат для выпадающего списка
+    all_rooms_list = sorted([str(r['room_id']) for r in rooms])
 except Exception as e:
     st.error(f"❌ Ошибка загрузки комнат: {e}")
     st.stop()
 
 # =========================================================
-# ЗАГРУЗКА ДАННЫХ (ТОЛЬКО ОДИН РАЗ)
+# ЗАГРУЗКА ДАННЫХ
 # =========================================================
 if not st.session_state.data_loaded:
     with st.spinner("Загрузка данных из Google Sheets..."):
@@ -59,7 +62,7 @@ if not st.session_state.data_loaded:
         st.session_state.guests_df = guests_df
         st.session_state.data_loaded = True
         
-        # Отладочная информация о резидентах
+        # Отладочная информация
         residents_count = len(guests_df[guests_df['resident'] == True])
         non_residents_count = len(guests_df[guests_df['resident'] == False])
         
@@ -67,51 +70,8 @@ if not st.session_state.data_loaded:
             st.write(f"Всего гостей: {len(guests_df)}")
             st.write(f"Резиденты (будут жить): {residents_count}")
             st.write(f"Нерезиденты (не будут жить): {non_residents_count}")
-            
-            if non_residents_count > 0:
-                st.write("**Нерезиденты (проверьте, правильно ли определено):**")
-                tariff_col = None
-                for col in guests_df.columns:
-                    if 'Выбор тарифа' in str(col):
-                        tariff_col = col
-                        break
-                
-                if tariff_col and tariff_col in guests_df.columns:
-                    non_res = guests_df[guests_df['resident'] == False][['ФИО', tariff_col]]
-                    st.dataframe(non_res.head(10))
-                else:
-                    non_res = guests_df[guests_df['resident'] == False][['ФИО']]
-                    st.dataframe(non_res.head(10))
-            
-            # Показываем пример проверки для первого гостя
-            if len(guests_df) > 0:
-                first_guest = guests_df.iloc[0]
-                st.write("**Пример проверки для первого гостя:**")
-                st.write(f"ФИО: {first_guest.get('ФИО', 'N/A')}")
-                
-                st.write("Отмеченные комнаты:")
-                room_cols = [col for col in raw.columns if 'Комната' in str(col) and 'ночь' in str(col)]
-                found_rooms = False
-                for col in room_cols:
-                    if col in first_guest.index:
-                        val = first_guest.get(col, '')
-                        if pd.notna(val) and str(val).strip() and str(val).strip().lower() not in ['', 'нет', '-', 'false', 'nan']:
-                            st.write(f"  ✅ {col}: {val}")
-                            found_rooms = True
-                if not found_rooms:
-                    st.write("  ❌ Нет отмеченных комнат")
-                
-                tariff_col = None
-                for col in raw.columns:
-                    if 'Выбор тарифа' in str(col):
-                        tariff_col = col
-                        break
-                if tariff_col and tariff_col in first_guest.index:
-                    st.write(f"Тариф: {first_guest.get(tariff_col, 'не указан')}")
-                
-                st.write(f"**Резидент: {first_guest.get('resident', 'N/A')}**")
         
-        st.success(f"✅ Загружено {len(guests_df)} гостей (из них резидентов: {len(guests_df[guests_df['resident'] == True])})")
+        st.success(f"✅ Загружено {len(guests_df)} гостей (из них резидентов: {residents_count})")
 else:
     raw = st.session_state.raw
     registration_df = st.session_state.registration_df
@@ -402,33 +362,171 @@ def export_to_excel_with_styles(layout):
 
 
 # =========================================================
-# ФУНКЦИЯ ПРИНУДИТЕЛЬНОГО ПРИМЕНЕНИЯ ПРАВИЛ
+# ФУНКЦИЯ ОБНОВЛЕНИЯ РАССЕЛЕНИЯ
 # =========================================================
-def enforce_manual_rules(result_df, guests_df, rooms_list):
-    """
-    Принудительное применение правил для конкретных случаев
-    """
-    result_df = result_df.copy()
+def update_allocation():
+    """Обновляет план этажей после ручного изменения"""
+    if st.session_state.final_result_df is not None:
+        allocated_guests = st.session_state.final_result_df[
+            st.session_state.final_result_df["room_id"].apply(lambda x: str(x) not in ['не проживает', 'нет мест', 'требуется ручная обработка'])
+        ]
+        if len(allocated_guests) > 0:
+            st.session_state.layout = create_floor_layout(allocated_guests, rooms_df)
+        
+        # Сохраняем в Google Sheets
+        try:
+            save_results_with_details(
+                SHEET_ID, 
+                "Result", 
+                st.session_state.final_result_df, 
+                raw,
+                guests_df
+            )
+            st.success("✅ Изменения сохранены в Google Sheets")
+        except Exception as e:
+            st.warning(f"Не удалось сохранить в Google Sheets: {e}")
+
+
+# =========================================================
+# РЕДАКТОР РАССЕЛЕНИЯ
+# =========================================================
+def manual_allocation_editor():
+    """Интерфейс для ручного расселения"""
+    st.subheader("✏️ Ручное расселение")
     
-    # Создаем словари для быстрого поиска
-    room_map = {}
-    for _, row in result_df.iterrows():
-        room_id = row.get('room_id', '')
-        fio = row.get('ФИО', row.get('fio', ''))
-        if room_id not in ['не проживает', 'нет мест', 'требуется ручная обработка'] and fio:
-            room_map[fio] = room_id
+    if st.session_state.final_result_df is None:
+        st.warning("Сначала выполните автоматическое расселение")
+        return
     
-    st.info("🔧 Применение ручных правил расселения...")
+    # Получаем данные для редактирования
+    edit_df = st.session_state.final_result_df.copy()
     
-    # Список правил (можно добавлять новые правила здесь)
-    rules_applied = []
+    # Определяем колонку с ФИО
+    fio_col = 'ФИО' if 'ФИО' in edit_df.columns else 'fio' if 'fio' in edit_df.columns else None
     
-    if rules_applied:
-        st.success(f"✅ Применено {len(rules_applied)} ручных правил")
-    else:
-        st.info("Ручные правила не применялись")
+    if fio_col is None:
+        st.error("Не найдена колонка с ФИО")
+        return
     
-    return result_df
+    # Фильтруем только резидентов
+    residents_only = edit_df[edit_df["room_id"] != "не проживает"].copy()
+    
+    if len(residents_only) == 0:
+        st.info("Нет резидентов для ручного расселения")
+        return
+    
+    # Создаем словарь свободных мест в комнатах
+    room_free_spots = {}
+    for _, row in residents_only.iterrows():
+        room_id = row['room_id']
+        if room_id not in room_free_spots:
+            # Получаем вместимость комнаты
+            room_info = next((r for r in rooms if r['room_id'] == room_id), None)
+            capacity = room_info['вместимость'] if room_info else 2
+            room_free_spots[room_id] = {
+                'capacity': capacity,
+                'occupants': []
+            }
+        room_free_spots[room_id]['occupants'].append(row[fio_col])
+    
+    # Вычисляем свободные места
+    for room_id in room_free_spots:
+        room_free_spots[room_id]['free'] = room_free_spots[room_id]['capacity'] - len(room_free_spots[room_id]['occupants'])
+    
+    # Создаем интерфейс для каждого гостя
+    st.write(f"### Перемещение гостей ({len(residents_only)} человек)")
+    
+    # Поиск гостя
+    search_term = st.text_input("🔍 Поиск гостя по фамилии", placeholder="Введите фамилию...")
+    
+    filtered_guests = residents_only
+    if search_term:
+        filtered_guests = residents_only[residents_only[fio_col].str.contains(search_term, case=False, na=False)]
+    
+    # Для каждого гостя - выбор комнаты
+    st.write(f"**Найдено гостей: {len(filtered_guests)}**")
+    
+    # Создаем колонки для выбора
+    for idx, (_, guest) in enumerate(filtered_guests.iterrows()):
+        col1, col2, col3 = st.columns([3, 2, 1])
+        
+        with col1:
+            st.write(f"**{guest[fio_col]}**")
+            if guest.get('comment'):
+                st.caption(f"💬 {guest['comment'][:100]}...")
+        
+        with col2:
+            # Текущая комната
+            current_room = guest['room_id']
+            current_capacity = guest.get('room_capacity', '')
+            st.write(f"Текущая: {current_room} (вм:{current_capacity})")
+            
+            # Выбор новой комнаты
+            # Сортируем комнаты: сначала свободные места
+            room_options = []
+            for room_id, info in room_free_spots.items():
+                if room_id != current_room or info['free'] > 0:
+                    status = f"свободно {info['free']}/{info['capacity']}" if info['free'] > 0 else "занято"
+                    room_options.append(f"{room_id} ({status})")
+                else:
+                    room_options.append(f"{room_id} (занято)")
+            
+            room_options.insert(0, "--- оставить как есть ---")
+            room_options.append("не проживает")
+            
+            selected = st.selectbox(
+                "Новая комната",
+                options=room_options,
+                index=0,
+                key=f"room_select_{idx}_{guest[fio_col]}",
+                label_visibility="collapsed"
+            )
+            
+            if selected != "--- оставить как есть ---":
+                new_room = selected.split(" ")[0] if selected != "не проживает" else "не проживает"
+                
+                # Обновляем в DataFrame
+                mask = st.session_state.final_result_df[fio_col] == guest[fio_col]
+                st.session_state.final_result_df.loc[mask, 'room_id'] = new_room
+                
+                if new_room != "не проживает":
+                    # Обновляем вместимость комнаты
+                    room_info = next((r for r in rooms if r['room_id'] == new_room), None)
+                    if room_info:
+                        st.session_state.final_result_df.loc[mask, 'room_capacity'] = room_info['вместимость']
+                
+                st.rerun()
+        
+        with col3:
+            if st.button("🔄", key=f"refresh_{idx}_{guest[fio_col]}"):
+                update_allocation()
+                st.rerun()
+        
+        st.divider()
+    
+    # Кнопка для массового обновления
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        if st.button("💾 Сохранить все изменения", type="primary"):
+            update_allocation()
+            st.success("Изменения сохранены!")
+            st.rerun()
+    
+    with col2:
+        if st.button("🔄 Обновить план этажей"):
+            update_allocation()
+            st.rerun()
+    
+    with col3:
+        if st.button("📊 Показать статистику"):
+            # Статистика по комнатам
+            stats = st.session_state.final_result_df[
+                st.session_state.final_result_df["room_id"] != "не проживает"
+            ]['room_id'].value_counts()
+            st.write("### 📊 Статистика заселения")
+            st.write(f"**Всего занято комнат:** {len(stats)}")
+            st.write(f"**Среднее количество человек в комнате:** {stats.mean():.1f}")
+            st.dataframe(stats.head(20))
 
 
 # =========================================================
@@ -443,7 +541,7 @@ col1, col2, col3 = st.columns(3)
 with col1:
     st.metric("Всего гостей", len(guests_df))
 with col2:
-    st.metric("Резиденты (нуждаются в размещении)", len(residents))
+    st.metric("Резиденты", len(residents))
 with col3:
     st.metric("Нерезиденты", len(non_residents))
 
@@ -457,119 +555,86 @@ display_comments_report(comments_report)
 
 st.markdown("---")
 
-# Таблица с гостями
-st.subheader("📋 Список гостей")
-st.dataframe(guests_df, width="stretch")
+# Вкладки для автоматического и ручного расселения
+tab1, tab2, tab3 = st.tabs(["🚀 Автоматическое расселение", "✏️ Ручное расселение", "📋 Список гостей"])
 
-# Кнопка расселения
-if st.button("🚀 Расселить", type="primary", width="stretch"):
-    with st.spinner("Идет расселение..."):
+with tab1:
+    # Таблица с гостями
+    st.subheader("📋 Список резидентов")
+    st.dataframe(residents[['ФИО', 'возраст', 'должность', 'город', 'comment']], width="stretch")
+    
+    # Кнопка расселения
+    if st.button("🚀 Запустить автоматическое расселение", type="primary", width="stretch"):
+        with st.spinner("Идет расселение..."):
+            result, debug = smart_solve(
+                residents.to_dict("records"),
+                rooms
+            )
         
-        # ОТЛАДКА
-        st.write("### Отладка перед расселением")
-        st.write(f"Количество резидентов: {len(residents)}")
-        st.write(f"Количество комнат: {len(rooms)}")
-        
-        if len(residents) > 0:
-            st.write("Первый резидент:", residents.iloc[0]['ФИО'] if 'ФИО' in residents.columns else "Нет колонки ФИО")
-            st.write("Колонки в residents:", list(residents.columns))
-        
-        st.write("---")
-        
-        result, debug = smart_solve(
-            residents.to_dict("records"),
-            rooms
-        )
-    
-    # Проверяем, есть ли ошибка в результате
-    if "error" in result.columns:
-        st.error(f"❌ Ошибка при расселении: {result.iloc[0]['error']}")
-        st.stop()
-    
-    if len(result) == 0:
-        st.error("❌ Не удалось найти решение для расселения")
-        st.stop()
-    
-    # Добавляем даты
-    result_with_dates = []
-    for _, row in result.iterrows():
-        guest_data = row.to_dict()
-        # Используем правильное имя поля - "ФИО"
-        if 'ФИО' not in guest_data and 'fio' in guest_data:
-            guest_data['ФИО'] = guest_data['fio']
-        
-        if 'ФИО' not in guest_data:
-            st.error(f"❌ В результате нет колонки 'ФИО'. Доступные колонки: {list(guest_data.keys())}")
-            st.stop()
-        
-        check_in, check_out = extract_dates_from_guest(guest_data["ФИО"], raw)
-        guest_data["Дата заезда"] = check_in
-        guest_data["Дата отъезда"] = check_out
-        result_with_dates.append(guest_data)
-    
-    result_df = pd.DataFrame(result_with_dates)
-    
-    # ПРИМЕНЯЕМ РУЧНЫЕ ПРАВИЛА
-    result_df = enforce_manual_rules(result_df, guests_df, rooms)
-    
-    # Отображаем отладочную информацию
-    with st.expander("🔍 Отладочная информация"):
-        st.json(debug)
-    
-    # Нерезиденты
-    non_residents_with_dates = []
-    for _, row in non_residents.iterrows():
-        guest_data = row.to_dict()
-        check_in, check_out = extract_dates_from_guest(guest_data["ФИО"], raw)
-        guest_data["Дата заезда"] = check_in
-        guest_data["Дата отъезда"] = check_out
-        guest_data["room_id"] = "не проживает"
-        non_residents_with_dates.append(guest_data)
-    
-    non_residents_df = pd.DataFrame(non_residents_with_dates)
-    
-    # Объединяем
-    final_result = pd.concat([result_df, non_residents_df], ignore_index=True)
-    st.session_state.final_result_df = final_result
-    
-    # Создаем layout
-    allocated_guests = final_result[final_result["room_id"].apply(lambda x: str(x) not in ['не проживает', 'нет мест', 'требуется ручная обработка'])]
-    if len(allocated_guests) > 0 and len(rooms_df) > 0:
-        st.session_state.layout = create_floor_layout(allocated_guests, rooms_df)
-    
-   # Сохраняем в Google Sheets
-    try:
-        save_results_with_details(
-            SHEET_ID, 
-            "Result", 
-            final_result, 
-            raw,
-            guests_df  # Добавляем guests_df
-        )
-    except Exception as e:
-        st.warning(f"Не удалось сохранить в Google Sheets: {e}")
+        if "error" in result.columns:
+            st.error(f"❌ Ошибка при расселении: {result.iloc[0]['error']}")
+        elif len(result) == 0:
+            st.error("❌ Не удалось найти решение для расселения")
+        else:
+            # Добавляем даты
+            result_with_dates = []
+            for _, row in result.iterrows():
+                guest_data = row.to_dict()
+                if 'ФИО' not in guest_data and 'fio' in guest_data:
+                    guest_data['ФИО'] = guest_data['fio']
+                
+                if 'ФИО' in guest_data:
+                    check_in, check_out = extract_dates_from_guest(guest_data["ФИО"], raw)
+                    guest_data["Дата заезда"] = check_in
+                    guest_data["Дата отъезда"] = check_out
+                    result_with_dates.append(guest_data)
+            
+            result_df = pd.DataFrame(result_with_dates)
+            
+            # Нерезиденты
+            non_residents_with_dates = []
+            for _, row in non_residents.iterrows():
+                guest_data = row.to_dict()
+                check_in, check_out = extract_dates_from_guest(guest_data["ФИО"], raw)
+                guest_data["Дата заезда"] = check_in
+                guest_data["Дата отъезда"] = check_out
+                guest_data["room_id"] = "не проживает"
+                guest_data["room_capacity"] = 0
+                non_residents_with_dates.append(guest_data)
+            
+            non_residents_df = pd.DataFrame(non_residents_with_dates)
+            
+            # Объединяем
+            final_result = pd.concat([result_df, non_residents_df], ignore_index=True)
+            st.session_state.final_result_df = final_result
+            
+            # Создаем layout
+            allocated_guests = final_result[final_result["room_id"].apply(lambda x: str(x) not in ['не проживает', 'нет мест', 'требуется ручная обработка'])]
+            if len(allocated_guests) > 0:
+                st.session_state.layout = create_floor_layout(allocated_guests, rooms_df)
+            
+            # Сохраняем в Google Sheets
+            try:
+                save_results_with_details(SHEET_ID, "Result", final_result, raw, guests_df)
+                st.success("✅ Расселение выполнено! Результат сохранен в Google Sheets")
+            except Exception as e:
+                st.warning(f"Не удалось сохранить в Google Sheets: {e}")
+            
+            st.rerun()
 
+with tab2:
+    manual_allocation_editor()
     
-    st.success("✅ Готово! Результат сохранен")
-    st.rerun()
-
-
-# =========================================================
-# ОТОБРАЖЕНИЕ РЕЗУЛЬТАТОВ
-# =========================================================
-if st.session_state.final_result_df is not None:
-    
-    # ВИЗУАЛИЗАЦИЯ ПЛАНА ЭТАЖЕЙ
-    st.markdown("---")
-    st.subheader("🏠 План этажей с расселением")
-    
+    # Отображение плана этажей
     if st.session_state.layout:
-        # Выбор корпуса
+        st.markdown("---")
+        st.subheader("🏠 План этажей с расселением")
+        
         building_filter = st.radio(
             "Выберите корпус:",
             options=["Все", "Красный (1)", "Желтый (2)"],
             horizontal=True,
-            key="building_filter"
+            key="building_filter_manual"
         )
         
         if building_filter == "Красный (1)":
@@ -580,51 +645,54 @@ if st.session_state.final_result_df is not None:
             selected_building = None
         
         render_floor_plan(st.session_state.layout, selected_building)
-    else:
-        st.info("Нет данных для отображения плана этажей")
+
+with tab3:
+    st.subheader("📋 Полный список гостей")
+    st.dataframe(guests_df, width="stretch")
     
-   # ТАБЛИЦА С РЕЗУЛЬТАТАМИ
-    st.subheader("📋 Таблица расселения")
+    # Экспорт в CSV
+    csv = guests_df.to_csv(index=False).encode('utf-8-sig')
+    st.download_button(
+        label="📥 Скачать список гостей (CSV)",
+        data=csv,
+        file_name=f"guests_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+        mime="text/csv"
+    )
+
+
+# =========================================================
+# ОТОБРАЖЕНИЕ РЕЗУЛЬТАТОВ ПОСЛЕ РАССЕЛЕНИЯ
+# =========================================================
+if st.session_state.final_result_df is not None and st.session_state.layout:
+    st.markdown("---")
+    st.subheader("📊 Текущее расселение")
     
-    # Проверяем, какие колонки есть в результате
-    result_columns = st.session_state.final_result_df.columns.tolist()
+    # Таблица расселения
+    fio_col = 'ФИО' if 'ФИО' in st.session_state.final_result_df.columns else 'fio'
+    display_cols = [fio_col, 'возраст', 'должность', 'город', 'room_id', 'room_capacity', 'Дата заезда', 'Дата отъезда']
+    existing_cols = [c for c in display_cols if c in st.session_state.final_result_df.columns]
+    st.dataframe(st.session_state.final_result_df[existing_cols], width="stretch")
     
-    # Определяем колонку с ФИО
-    fio_col = None
-    if 'ФИО' in result_columns:
-        fio_col = 'ФИО'
-    elif 'fio' in result_columns:
-        fio_col = 'fio'
+    # Экспорт
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("📑 Экспорт плана этажей в Excel"):
+            try:
+                excel_bytes = export_to_excel_with_styles(st.session_state.layout)
+                st.download_button(
+                    label="📥 Скачать",
+                    data=excel_bytes,
+                    file_name=f"plan_raseleniya_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+            except Exception as e:
+                st.error(f"Ошибка: {e}")
     
-    if fio_col:
-        display_columns = [fio_col, 'room_id', 'room_capacity', 'Дата заезда', 'Дата отъезда', 'comment']
-        existing_display = [col for col in display_columns if col in st.session_state.final_result_df.columns]
-        st.dataframe(st.session_state.final_result_df[existing_display], width="stretch")
-    else:
-        st.warning("Не найдена колонка с ФИО в результатах")
-        st.write("Доступные колонки:", result_columns)
-    
-    # Кнопка для экспорта в Excel
-    if st.session_state.layout:
-        st.markdown("---")
-        st.subheader("📊 Экспорт в Excel")
-        if st.button("📑 Экспорт всех этажей в Excel", type="primary"):
-            with st.spinner("Создание Excel-файла..."):
-                try:
-                    excel_bytes = export_to_excel_with_styles(st.session_state.layout)
-                    st.download_button(
-                        label="📥 Скачать план расселения (Excel)",
-                        data=excel_bytes,
-                        file_name=f"plan_raseleniya_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        key="download_excel"
-                    )
-                    st.success("Excel-файл готов!")
-                except Exception as e:
-                    st.error(f"Ошибка при создании Excel: {str(e)}")
-    
-    # Кнопка для сброса
-    if st.button("🔄 Новое расселение"):
-        st.session_state.final_result_df = None
-        st.session_state.layout = None
-        st.rerun()
+    with col2:
+        csv = st.session_state.final_result_df.to_csv(index=False).encode('utf-8-sig')
+        st.download_button(
+            label="📥 Скачать таблицу (CSV)",
+            data=csv,
+            file_name=f"raselenie_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+            mime="text/csv"
+        )
