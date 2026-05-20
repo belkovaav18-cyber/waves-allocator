@@ -83,10 +83,8 @@ def save_results_with_details(sheet_id, sheet_name, result_df, raw_df):
     try:
         sheet = client.open_by_key(sheet_id)
         
-        # Пытаемся получить существующий лист или создаем новый
         try:
             worksheet = sheet.worksheet(sheet_name)
-            # Очищаем существующий лист
             worksheet.clear()
         except:
             worksheet = sheet.add_worksheet(title=sheet_name, rows="1000", cols="50")
@@ -95,9 +93,12 @@ def save_results_with_details(sheet_id, sheet_name, result_df, raw_df):
         save_df = result_df.copy()
         
         # Добавляем колонку с выбранными услугами из raw_df
-        if 'fio' in save_df.columns and 'ФИО' in raw_df.columns:
+        # Используем правильное название колонки - 'ФИО'
+        fio_col = 'ФИО' if 'ФИО' in save_df.columns else 'fio'
+        
+        if fio_col in save_df.columns and 'ФИО' in raw_df.columns:
             services = []
-            for fio in save_df['fio']:
+            for fio in save_df[fio_col]:
                 guest_row = raw_df[raw_df['ФИО'] == fio]
                 if len(guest_row) > 0:
                     selected = []
