@@ -485,24 +485,7 @@ if st.button("🚀 Расселить", type="primary", use_container_width=True
     result_with_dates = []
     for _, row in result.iterrows():
         guest_data = row.to_dict()
-        if 'fio' not in guest_data:
-            st.error(f"❌ В результате нет колонки 'fio'. Доступные колонки: {list(guest_data.keys())}")
-            st.stop()
-        check_in, check_out = extract_dates_from_guest(guest_data["fio"], raw)
-        guest_data["Дата заезда"] = check_in
-        guest_data["Дата отъезда"] = check_out
-        result_with_dates.append(guest_data)
-    
-    result_df = pd.DataFrame(result_with_dates)
-    
-    # ПРИМЕНЯЕМ РУЧНЫЕ ПРАВИЛА
-    result_df = enforce_manual_rules(result_df, guests_df, rooms)
-    
- # Добавляем даты
-    result_with_dates = []
-    for _, row in result.iterrows():
-        guest_data = row.to_dict()
-        # Используем правильное имя поля - "ФИО" вместо "fio"
+        # Используем правильное имя поля - "ФИО"
         if 'ФИО' not in guest_data and 'fio' in guest_data:
             guest_data['ФИО'] = guest_data['fio']
         
@@ -516,6 +499,29 @@ if st.button("🚀 Расселить", type="primary", use_container_width=True
         result_with_dates.append(guest_data)
     
     result_df = pd.DataFrame(result_with_dates)
+    
+    # ПРИМЕНЯЕМ РУЧНЫЕ ПРАВИЛА
+    result_df = enforce_manual_rules(result_df, guests_df, rooms)
+    
+    # Отображаем отладочную информацию
+    with st.expander("🔍 Отладочная информация"):
+        st.json(debug)
+    
+    # Нерезиденты
+    non_residents_with_dates = []
+    for _, row in non_residents.iterrows():
+        guest_data = row.to_dict()
+        check_in, check_out = extract_dates_from_guest(guest_data["ФИО"], raw)
+        guest_data["Дата заезда"] = check_in
+        guest_data["Дата отъезда"] = check_out
+        guest_data["room_id"] = "не проживает"
+        non_residents_with_dates.append(guest_data)
+    
+    non_residents_df = pd.DataFrame(non_residents_with_dates)
+    
+    # Объединяем
+    final_result = pd.concat([result_df, non_residents_df], ignore_index=True)
+    st.session_state.final_result_df = final_result
     
     # Создаем layout
     allocated_guests = final_result[final_result["room_id"].apply(lambda x: x not in ['не проживает', 'нет мест', 'требуется ручная обработка'])]
