@@ -12,7 +12,17 @@ from preprocess import preprocess_guests
 from solver_controller import smart_solve
 from comment_engine import process_comments, display_comments_report
 from feasibility import check_feasibility, display_feasibility_report
-
+def fix_dataframe_types(df):
+    """Исправляет типы данных для корректного отображения"""
+    df = df.copy()
+    for col in df.columns:
+        if col in ['возраст', 'тариф', 'число_ночей', 'стоимость', 'room_capacity']:
+            # Преобразуем в числа, пустые значения -> 0
+            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0).astype(int)
+        else:
+            # Преобразуем в строки, заменяем nan на пустую строку
+            df[col] = df[col].astype(str).replace('nan', '').replace('None', '')
+    return df
 # =========================================================
 # КОНСТАНТЫ
 # =========================================================
