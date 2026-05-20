@@ -1,172 +1,149 @@
-# sheets.py
-
-import streamlit as st
 import gspread
-import pandas as pd
 from google.oauth2.service_account import Credentials
-from functools import lru_cache
-import time
+import pandas as pd
+from datetime import datetime
+import streamlit as st
 
-SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
+# Определяем константы здесь, но они будут переопределены в app.py при импорте
+SHEET_ID = "1lF4SV24wTo5OwsidQ7UPqBVaGzdw_fBSx0OuBJJ4cWg"
+REGISTRATION_SHEET_ID = "1fHjI0hTtlbjDZxSCWVidzGnJ7aY4joB7UUVXFEB0rxw"
+TAB_NAME = "Sheet"
 
-
-def connect():
-    creds = Credentials.from_service_account_info(
-        st.secrets["gcp_service_account"],
-        scopes=SCOPES
-    )
-    return gspread.authorize(creds)
-
-
-@st.cache_data(ttl=300, show_spinner=False)  # Кэш на 5 минут
-def load_guests(sheet_id, tab_name="Sheet") -> pd.DataFrame:
-    """Загружает данные из таблицы бронирования с кэшированием"""
+def get_google_client():
+    """Подключение к Google Sheets"""
     try:
-        client = connect()
-        sheet = client.open_by_key(sheet_id).worksheet(tab_name)
-        data = sheet.get_all_records()
-        df = pd.DataFrame(data)
-        print(f"Загружено {len(df)} записей из бронирования")
-        return df
+        # Пытаемся получить секреты из st.secrets
+        if 'gcp_service_account' in st.secrets:
+            creds_dict = dict(st.secrets["gcp_service_account"])
+            scopes = ['https://www.googleapis.com/auth/spreadsheets', 
+                     'https://www.googleapis.com/auth/drive']
+            creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
+            client = gspread.authorize(creds)
+            return client
+        else:
+            # Для локальной разработки используем json файл
+            import json
+            with open('credentials.json', 'r') as f:
+                creds_dict = json.load(f)
+            scopes = ['https://www.googleapis.com/auth/spreadsheets', 
+                     'https://www.googleapis.com/auth/drive']
+            creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
+            client = gspread.authorize(creds)
+            return client
     except Exception as e:
-        st.error(f"Ошибка загрузки бронирования: {e}")
-        return pd.DataFrame()
-
-
-@st.cache_data(ttl=300, show_spinner=False)  # Кэш на 5 минут
-def load_registration_data(sheet_id, tab_name="Sheet") -> pd.DataFrame:
-    """Загружает данные из таблицы регистрации с кэшированием"""
-    try:
-        client = connect()
-        sheet = client.open_by_key(sheet_id).worksheet(tab_name)
-        
-        # Получаем все значения
-        all_values = sheet.get_all_values()
-        
-        if len(all_values) < 2:
-            print("Таблица регистрации пуста")
-            return None
-        
-        # Первая строка - заголовки
-        headers = all_values[0]
-        
-        # Обрабатываем дубликаты в заголовках
-        unique_headers = []
-        header_count = {}
-        for h in headers:
-            if h in header_count:
-                header_count[h] += 1
-                unique_headers.append(f"{h}_{header_count[h]}")
-            else:
-                header_count[h] = 1
-                unique_headers.append(h)
-        
-        # Создаем DataFrame
-        data_rows = all_values[1:]
-        df = pd.DataFrame(data_rows, columns=unique_headers)
-        
-        # Оставляем только нужные колонки
-        needed_cols = {
-            'surname': 'Фамилия',
-            'name': 'Имя',
-            'patronymic': 'Отчество',
-            'birth_date': 'Дата рождения',
-            'position': 'Должность',
-            'city': 'Город',
-            'gender': 'Пол'
-        }
-        
-        col_mapping = {}
-        for key, needed in needed_cols.items():
-            for col in unique_headers:
-                if needed in col:
-                    col_mapping[needed] = col
-                    break
-        
-        if col_mapping:
-            df = df[[col_mapping[needed] for needed in col_mapping if needed in col_mapping]]
-            df = df.rename(columns={col_mapping[needed]: needed for needed in col_mapping})
-        
-        print(f"Загружено {len(df)} записей из таблицы регистрации")
-        return df
-        
-    except Exception as e:
-        st.warning(f"Не удалось загрузить таблицу регистрации: {e}")
+        st.warning(f"Не удалось подключиться к Google Sheets: {e}")
         return None
 
-
-def save_results(sheet_id, tab_name, df: pd.DataFrame):
-    client = connect()
-    sh = client.open_by_key(sheet_id)
-
-    try:
-        sheet = sh.worksheet(tab_name)
-    except:
-        sheet = sh.add_worksheet(title=tab_name, rows=2000, cols=50)
-
-    sheet.clear()
-    df = df.fillna("").astype(str)
-    data = [df.columns.tolist()] + df.values.tolist()
-    sheet.update(data)
-
-
-def save_results_with_details(sheet_id, tab_name, results_df, original_guests_df):
-    """Сохраняет результаты расселения"""
-    client = connect()
-    sh = client.open_by_key(sheet_id)
-    
-    df_to_save = results_df.copy()
-    
-    fio_col = 'fio' if 'fio' in df_to_save.columns else 'ФИО'
-    
-    # Создаем словари для быстрого поиска
-    tariff_dict = {}
-    comment_dict = {}
-    
-    for idx, row in original_guests_df.iterrows():
-        fio = row.get('ФИО', '')
-        if fio:
-            tariff_value = ''
-            for col in original_guests_df.columns:
-                if 'тариф' in str(col).lower() or 'проживание' in str(col).lower():
-                    tariff_value = row.get(col, '')
-                    break
-            
-            comment_value = ''
-            for col in original_guests_df.columns:
-                if 'коммент' in str(col).lower():
-                    comment_value = row.get(col, '')
-                    break
-            
-            tariff_dict[fio] = tariff_value
-            comment_dict[fio] = comment_value
-    
-    df_to_save['Тариф'] = df_to_save[fio_col].map(tariff_dict).fillna('')
-    df_to_save['Комментарий'] = df_to_save[fio_col].map(comment_dict).fillna('')
-    
-    # Добавляем возраст и должность
-    if 'age' in original_guests_df.columns:
-        age_dict = dict(zip(original_guests_df['ФИО'], original_guests_df['age']))
-        df_to_save['Возраст'] = df_to_save[fio_col].map(age_dict).fillna('')
-    
-    if 'position' in original_guests_df.columns:
-        position_dict = dict(zip(original_guests_df['ФИО'], original_guests_df['position']))
-        df_to_save['Должность'] = df_to_save[fio_col].map(position_dict).fillna('')
-    
-    columns_order = ['fio', 'room_id', 'room_capacity', 'Дата заезда', 'Дата отъезда', 
-                     'Тариф', 'Комментарий', 'Возраст', 'Должность']
-    existing_columns = [col for col in columns_order if col in df_to_save.columns]
-    other_columns = [col for col in df_to_save.columns if col not in existing_columns]
-    df_to_save = df_to_save[existing_columns + other_columns]
+def load_guests(sheet_id, tab_name):
+    """Загрузить данные гостей из Google Sheets"""
+    client = get_google_client()
+    if client is None:
+        # Если нет подключения, пробуем загрузить из локального файла
+        try:
+            return pd.read_excel("data/guests.xlsx")
+        except:
+            return pd.DataFrame()
     
     try:
-        sheet = sh.worksheet(tab_name)
-    except:
-        sheet = sh.add_worksheet(title=tab_name, rows=2000, cols=50)
+        sheet = client.open_by_key(sheet_id)
+        worksheet = sheet.worksheet(tab_name)
+        data = worksheet.get_all_records()
+        df = pd.DataFrame(data)
+        return df
+    except Exception as e:
+        st.error(f"Ошибка загрузки данных: {e}")
+        return pd.DataFrame()
+
+def load_registration_data(sheet_id, tab_name):
+    """Загрузить данные регистрации из Google Sheets"""
+    client = get_google_client()
+    if client is None:
+        try:
+            return pd.read_excel("data/registration.xlsx")
+        except:
+            return pd.DataFrame()
     
-    sheet.clear()
-    df_to_save = df_to_save.fillna("").astype(str)
-    data = [df_to_save.columns.tolist()] + df_to_save.values.tolist()
-    sheet.update(data)
+    try:
+        sheet = client.open_by_key(sheet_id)
+        worksheet = sheet.worksheet(tab_name)
+        data = worksheet.get_all_records()
+        df = pd.DataFrame(data)
+        return df
+    except Exception as e:
+        st.error(f"Ошибка загрузки данных регистрации: {e}")
+        return pd.DataFrame()
+
+def save_results_with_details(sheet_id, sheet_name, result_df, raw_df):
+    """Сохранить результаты расселения в Google Sheets"""
+    client = get_google_client()
+    if client is None:
+        st.warning("Нет подключения к Google Sheets, результаты не сохранены")
+        return
     
-    return df_to_save
+    try:
+        sheet = client.open_by_key(sheet_id)
+        
+        # Пытаемся получить существующий лист или создаем новый
+        try:
+            worksheet = sheet.worksheet(sheet_name)
+            # Очищаем существующий лист
+            worksheet.clear()
+        except:
+            worksheet = sheet.add_worksheet(title=sheet_name, rows="1000", cols="50")
+        
+        # Подготавливаем данные для сохранения
+        save_df = result_df.copy()
+        
+        # Добавляем колонку с выбранными услугами из raw_df
+        if 'fio' in save_df.columns and 'ФИО' in raw_df.columns:
+            services = []
+            for fio in save_df['fio']:
+                guest_row = raw_df[raw_df['ФИО'] == fio]
+                if len(guest_row) > 0:
+                    selected = []
+                    for col in raw_df.columns:
+                        if 'Комната' in str(col) or 'Завтрак' in str(col) or 'Обед' in str(col) or 'Ужин' in str(col):
+                            val = guest_row.iloc[0].get(col, '')
+                            if pd.notna(val) and str(val).strip() and str(val).strip().lower() not in ['', 'нет', '-', 'false', 'nan']:
+                                selected.append(col)
+                    services.append(", ".join(selected) if selected else "нет")
+                else:
+                    services.append("нет")
+            save_df['выбранные_услуги'] = services
+        
+        # Сохраняем в worksheet
+        worksheet.update([save_df.columns.values.tolist()] + save_df.values.tolist())
+        
+        st.success(f"Результаты сохранены в Google Sheets на листе '{sheet_name}'")
+        
+    except Exception as e:
+        st.error(f"Ошибка сохранения результатов: {e}")
+
+def save_detailed_results(sheet_id, result_df):
+    """Сохранить детальные результаты расселения"""
+    client = get_google_client()
+    if client is None:
+        return
+    
+    try:
+        sheet = client.open_by_key(sheet_id)
+        
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        sheet_name = f"Расселение_{timestamp}"
+        
+        try:
+            worksheet = sheet.add_worksheet(title=sheet_name, rows="1000", cols="50")
+        except:
+            worksheet = sheet.worksheet(sheet_name)
+            worksheet.clear()
+        
+        # Сохраняем данные
+        worksheet.update([result_df.columns.values.tolist()] + result_df.values.tolist())
+        
+        # Форматируем заголовки
+        worksheet.freeze(rows=1)
+        
+        st.success(f"Детальные результаты сохранены на листе '{sheet_name}'")
+        
+    except Exception as e:
+        st.error(f"Ошибка сохранения детальных результатов: {e}")
