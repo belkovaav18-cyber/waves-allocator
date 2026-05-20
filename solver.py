@@ -22,7 +22,7 @@ class RoomAllocator:
         # Предопределенные группы
         self.predefined_groups = self._get_predefined_groups()
         
-        # Группы пар (муж+жен) - только они могут жить вместе разнополые
+        # Пары (мужчина+женщина) - только они могут жить вместе разнополые
         self.couples = self._get_couples()
         
         # Разделяем гостей
@@ -108,7 +108,7 @@ class RoomAllocator:
         g1_gender = self.guest_info.get(guest1, {}).get('gender', 'не указан')
         g2_gender = self.guest_info.get(guest2, {}).get('gender', 'не указан')
         
-        # Если пол не указан - разрешаем
+        # Если пол не указан у кого-то - разрешаем (но с предупреждением)
         if g1_gender == 'не указан' or g2_gender == 'не указан':
             return True
         
@@ -318,7 +318,7 @@ class RoomAllocator:
                 })
                 allocated_guests.add(guest)
         
-        # 3. Расселяем членов ПК
+        # 3. Расселяем членов ПК (по одному, так как пол не всегда известен)
         pc_rooms = self._get_rooms_by_capacity(2, exclude_rooms=used_rooms)
         for guest in self.pc_members:
             fio = guest.get('ФИО', guest.get('fio', ''))
@@ -344,45 +344,58 @@ class RoomAllocator:
                 })
                 allocated_guests.add(fio)
         
-        # 4. Расселяем оставшихся с учетом пола
+        # 4. Расселяем оставшихся - строго по полу!
         remaining = [fio for fio in self.guest_info.keys() if fio not in allocated_guests]
         
-        # Группируем по городу и полу
-        city_gender_groups = defaultdict(lambda: defaultdict(list))
+        # Разделяем по полу
+        male_guests = []
+        female_guests = []
+        unknown_guests = []
+        
         for fio in remaining:
-            city = self.guest_info[fio]['city']
             gender = self.guest_info[fio]['gender']
             age = self.guest_info[fio]['age'] or 0
-            city_gender_groups[city][gender].append((fio, age))
+            city = self.guest_info[fio]['city']
+            if gender == 'М':
+                male_guests.append((fio, age, city))
+            elif gender == 'Ж':
+                female_guests.append((fio, age, city))
+            else:
+                unknown_guests.append((fio, age, city))
         
+        # Получаем доступные комнаты
         available_rooms = [r for r in self.rooms if r['room_id'] not in used_rooms and r['вместимость'] >= 2]
         available_rooms.sort(key=lambda x: x['вместимость'])
         
-        room_idx = 0
-        
-        for city, gender_groups in city_gender_groups.items():
-            for gender, guests_list in gender_groups.items():
-                guests_list.sort(key=lambda x: x[1] if x[1] is not None else 0)
+        def allocate_by_gender(guests_list, gender_name):
+            nonlocal room_idx
+            # Группируем по городу
+            city_groups = defaultdict(list)
+            for fio, age, city in guests_list:
+                city_groups[city].append((fio, age))
+            
+            for city, guests_in_city in city_groups.items():
+                guests_in_city.sort(key=lambda x: x[1])
                 i = 0
-                while i < len(guests_list):
+                while i < len(guests_in_city):
                     if room_idx >= len(available_rooms):
-                        for j in range(i, len(guests_list)):
-                            fio, _ = guests_list[j]
+                        for j in range(i, len(guests_in_city)):
+                            fio, _ = guests_in_city[j]
                             allocations.append({
                                 'ФИО': fio,
                                 'room_id': 'нет мест',
                                 'room_capacity': 0,
                                 'comment': self.guest_info.get(fio, {}).get('comment', '')
                             })
-                        break
+                        return
                     
                     room = available_rooms[room_idx]
                     capacity = room['вместимость']
                     
                     group = []
                     j = i
-                    while len(group) < capacity and j < len(guests_list):
-                        group.append(guests_list[j][0])
+                    while len(group) < capacity and j < len(guests_in_city):
+                        group.append(guests_in_city[j][0])
                         j += 1
                     
                     for g_fio in group:
@@ -395,6 +408,20 @@ class RoomAllocator:
                     
                     room_idx += 1
                     i = j
+        
+        room_idx = 0
+        
+        # Сначала расселяем мужчин
+        if male_guests:
+            allocate_by_gender(male_guests, 'мужчины')
+        
+        # Потом женщин
+        if female_guests:
+            allocate_by_gender(female_guests, 'женщины')
+        
+        # Потом с неизвестным полом (селим отдельно или с кем попало)
+        if unknown_guests:
+            allocate_by_gender(unknown_guests, 'неизвестный пол')
         
         # 5. Добавляем нерезидентов
         for guest in self.guests:
