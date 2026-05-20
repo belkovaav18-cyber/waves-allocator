@@ -65,4 +65,64 @@ def check_feasibility(guests_df, rooms_df):
             'message': f"✅ Одноместных комнат ({len(single_rooms)}) достаточно для членов ПК ({len(pc_members)})."
         })
     
-    # Проверка 3: гости с коммента
+    # Проверка 3: гости с комментариями
+    guests_with_comments = residents[residents['comment'].notna() & (residents['comment'] != '')]
+    if len(guests_with_comments) > 0:
+        issues.append({
+            'type': 'comments',
+            'severity': 'warning',
+            'message': f"⚠️ {len(guests_with_comments)} гостей оставили комментарии. Требуется ручная обработка!"
+        })
+    
+    # Проверка 4: распределение по городам
+    cities = residents['город'].value_counts()
+    if len(cities) > 0:
+        issues.append({
+            'type': 'cities',
+            'severity': 'info',
+            'message': f"📊 Гости из {len(cities)} городов. Наибольшее количество: {cities.iloc[0]} чел. из {cities.index[0]}"
+        })
+    
+    return issues
+
+def display_feasibility_report(issues):
+    """
+    Отображение отчета о возможности расселения
+    """
+    st.subheader("🔍 Проверка возможности расселения")
+    
+    for issue in issues:
+        if issue['severity'] == 'error':
+            st.error(issue['message'])
+        elif issue['severity'] == 'warning':
+            st.warning(issue['message'])
+        elif issue['severity'] == 'success':
+            st.success(issue['message'])
+        else:
+            st.info(issue['message'])
+
+def suggest_allocation_strategy(guests_df, rooms_df):
+    """
+    Предложить стратегию расселения на основе анализа данных
+    """
+    suggestions = []
+    
+    residents = guests_df[guests_df['resident'] == True]
+    
+    # Анализ возрастных групп
+    ages = residents['возраст'].dropna()
+    if len(ages) > 0:
+        age_groups = pd.cut(ages, bins=[0, 30, 40, 50, 60, 100], labels=['<30', '30-40', '40-50', '50-60', '60+'])
+        suggestions.append(f"📊 Возрастные группы: {dict(age_groups.value_counts())}")
+    
+    # Анализ городов
+    cities = residents['город'].value_counts()
+    if len(cities) > 0:
+        suggestions.append(f"🏙️ Рекомендуется селить вместе гостей из одного города. Крупнейшие группы: {dict(cities.head(3))}")
+    
+    # Анализ должностей
+    positions = residents['должность'].value_counts().head(3)
+    if len(positions) > 0:
+        suggestions.append(f"💼 Среди гостей: {', '.join([f'{pos} ({count})' for pos, count in positions.items()])}")
+    
+    return suggestions
