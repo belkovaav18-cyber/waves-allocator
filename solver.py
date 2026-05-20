@@ -79,19 +79,19 @@ class RoomAllocator:
             
             comment = self.guest_info[fio]['comment'].lower()
             
-            # Пожелание по этажу
+            # Пожелание по этажу - ищем цифру перед словом "этаж"
             floor_match = re.search(r'(\d+)\s*этаж', comment)
             if floor_match:
                 self.guest_info[fio]['preferred_floor'] = floor_match.group(1)
             
             # Пожелание по корпусу
-            if 'красный' in comment or 'корпус №1' in comment or 'корпус 1' in comment:
+            if 'красный' in comment or 'корпус №1' in comment or 'корпус 1' in comment or 'красном' in comment:
                 self.guest_info[fio]['preferred_building'] = '1'
-            if 'желтый' in comment or 'корпус №2' in comment or 'корпус 2' in comment:
+            if 'желтый' in comment or 'корпус №2' in comment or 'корпус 2' in comment or 'желтом' in comment:
                 self.guest_info[fio]['preferred_building'] = '2'
             
             # Запрос на одноместное размещение
-            if any(w in comment for w in ['без подселения', 'одноместный', 'не подселять']):
+            if any(w in comment for w in ['без подселения', 'одноместный', 'не подселять', 'без подселен']):
                 self.guest_info[fio]['single_request'] = True
             
             # Категоризация
@@ -154,7 +154,8 @@ class RoomAllocator:
         if building:
             rooms = [r for r in rooms if str(r['room_id']).startswith(building)]
         if floor:
-            rooms = [r for r in rooms if str(r['room_id']).split('-')[1].startswith(floor) if '-' in str(r['room_id'])]
+            # Проверяем этаж (первая цифра после дефиса)
+            rooms = [r for r in rooms if '-' in str(r['room_id']) and str(r['room_id']).split('-')[1].startswith(floor)]
         if exclude:
             rooms = [r for r in rooms if r['room_id'] not in exclude]
         return rooms
@@ -170,18 +171,28 @@ class RoomAllocator:
         else:
             capacities = [2, 3, 1]
         
-        for cap in capacities:
-            rooms_avail = self._get_rooms_by_capacity(cap, preferred_building, preferred_floor, used_rooms)
-            if rooms_avail:
-                return rooms_avail[0]
+        # Сначала ищем с учетом и корпуса, и этажа
+        if preferred_building and preferred_floor:
+            for cap in capacities:
+                rooms_avail = self._get_rooms_by_capacity(cap, preferred_building, preferred_floor, used_rooms)
+                if rooms_avail:
+                    return rooms_avail[0]
         
-        # Если не нашли с этажом, ищем без этажа
-        for cap in capacities:
-            rooms_avail = self._get_rooms_by_capacity(cap, preferred_building, None, used_rooms)
-            if rooms_avail:
-                return rooms_avail[0]
+        # Только с корпусом
+        if preferred_building:
+            for cap in capacities:
+                rooms_avail = self._get_rooms_by_capacity(cap, preferred_building, None, used_rooms)
+                if rooms_avail:
+                    return rooms_avail[0]
         
-        # Если не нашли с корпусом, ищем без корпуса
+        # Только с этажом
+        if preferred_floor:
+            for cap in capacities:
+                rooms_avail = self._get_rooms_by_capacity(cap, None, preferred_floor, used_rooms)
+                if rooms_avail:
+                    return rooms_avail[0]
+        
+        # Без предпочтений
         for cap in capacities:
             rooms_avail = self._get_rooms_by_capacity(cap, None, None, used_rooms)
             if rooms_avail:
@@ -217,13 +228,17 @@ class RoomAllocator:
             if not group_guests:
                 continue
             
-            # Ищем комнату подходящего размера
-            room = None
-            for cap in [group['size'], 3, 2]:
-                rooms_avail = self._get_rooms_by_capacity(cap, exclude=used_rooms)
-                if rooms_avail:
-                    room = rooms_avail[0]
-                    break
+            # Ищем комнату подходящего размера с учетом пожеланий первого гостя
+            first_guest = group_guests[0]
+            room = self._find_best_room(first_guest, used_rooms, prefer_single=False)
+            
+            # Если не нашли, ищем без учета пожеланий
+            if not room:
+                for cap in [group['size'], 3, 2]:
+                    rooms_avail = self._get_rooms_by_capacity(cap, exclude=used_rooms)
+                    if rooms_avail:
+                        room = rooms_avail[0]
+                        break
             
             if room:
                 used_rooms.add(room['room_id'])
