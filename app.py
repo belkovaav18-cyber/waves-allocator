@@ -423,11 +423,6 @@ def enforce_manual_rules(result_df, guests_df, rooms_list):
     # Список правил (можно добавлять новые правила здесь)
     rules_applied = []
     
-    # Здесь можно добавлять специфические правила для конкретных людей
-    # Например:
-    # if "Фамилия И.О." in room_map:
-    #     # применяем правило
-    
     if rules_applied:
         st.success(f"✅ Применено {len(rules_applied)} ручных правил")
     else:
@@ -469,10 +464,6 @@ st.dataframe(guests_df, width="stretch")
 # Кнопка расселения
 if st.button("🚀 Расселить", type="primary", width="stretch"):
     with st.spinner("Идет расселение..."):
-        # В app.py, в кнопке расселения, перед smart_solve добавьте:
-
-if st.button("🚀 Расселить", type="primary", width="stretch"):
-    with st.spinner("Идет расселение..."):
         
         # ОТЛАДКА
         st.write("### Отладка перед расселением")
@@ -485,10 +476,6 @@ if st.button("🚀 Расселить", type="primary", width="stretch"):
         
         st.write("---")
         
-        result, debug = smart_solve(
-            residents.to_dict("records"),
-            rooms
-        )
         result, debug = smart_solve(
             residents.to_dict("records"),
             rooms
@@ -601,14 +588,15 @@ if st.session_state.final_result_df is not None:
     st.dataframe(st.session_state.final_result_df[existing_display], width="stretch")
     
     # Отдельно показываем гостей, требующих ручной обработки
-    manual_guests = st.session_state.final_result_df[
-        st.session_state.final_result_df['room_id'].apply(lambda x: str(x) in ['требуется ручная обработка', 'нет мест'])
-    ]
-    if len(manual_guests) > 0:
-        st.warning(f"⚠️ {len(manual_guests)} гостей требуют ручной обработки расселения")
-        with st.expander("Показать список для ручной обработки"):
-            if 'ФИО' in manual_guests.columns and 'comment' in manual_guests.columns:
-                st.dataframe(manual_guests[['ФИО', 'comment']], width="stretch")
+    if 'room_id' in st.session_state.final_result_df.columns:
+        manual_guests = st.session_state.final_result_df[
+            st.session_state.final_result_df['room_id'].apply(lambda x: str(x) in ['требуется ручная обработка', 'нет мест'])
+        ]
+        if len(manual_guests) > 0:
+            st.warning(f"⚠️ {len(manual_guests)} гостей требуют ручной обработки расселения")
+            with st.expander("Показать список для ручной обработки"):
+                if 'ФИО' in manual_guests.columns and 'comment' in manual_guests.columns:
+                    st.dataframe(manual_guests[['ФИО', 'comment']], width="stretch")
     
     # Кнопка для экспорта в Excel
     if st.session_state.layout:
