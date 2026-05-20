@@ -98,10 +98,10 @@ with st.expander("🔍 Отладочная информация о резиде
         
         st.write(f"**Резидент: {first_guest.get('resident', 'N/A')}**")
         st.success(f"✅ Загружено {len(guests_df)} гостей (из них резидентов: {len(guests_df[guests_df['resident'] == True])})")
-else:
-    raw = st.session_state.raw
-    registration_df = st.session_state.registration_df
-    guests_df = st.session_state.guests_df
+        else:
+            raw = st.session_state.raw
+            registration_df = st.session_state.registration_df
+            guests_df = st.session_state.guests_df
 
 
 # =========================================================
