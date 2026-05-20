@@ -469,6 +469,26 @@ st.dataframe(guests_df, width="stretch")
 # Кнопка расселения
 if st.button("🚀 Расселить", type="primary", width="stretch"):
     with st.spinner("Идет расселение..."):
+        # В app.py, в кнопке расселения, перед smart_solve добавьте:
+
+if st.button("🚀 Расселить", type="primary", width="stretch"):
+    with st.spinner("Идет расселение..."):
+        
+        # ОТЛАДКА
+        st.write("### Отладка перед расселением")
+        st.write(f"Количество резидентов: {len(residents)}")
+        st.write(f"Количество комнат: {len(rooms)}")
+        
+        if len(residents) > 0:
+            st.write("Первый резидент:", residents.iloc[0]['ФИО'] if 'ФИО' in residents.columns else "Нет колонки ФИО")
+            st.write("Колонки в residents:", list(residents.columns))
+        
+        st.write("---")
+        
+        result, debug = smart_solve(
+            residents.to_dict("records"),
+            rooms
+        )
         result, debug = smart_solve(
             residents.to_dict("records"),
             rooms
