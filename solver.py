@@ -30,6 +30,37 @@ class RoomAllocator:
         self.regular_guests = []
         
         for guest in guests:
+            # Получаем ФИО
+            guest_fio = guest.get('ФИО', guest.get('fio', ''))
+            guest['comment_text'] = str(guest.get('comment', ''))
+            
+            # Нормализуем для проверки
+            normalized_guest = self._normalize_name(guest_fio)
+            
+            # Проверяем, член ли программного комитета
+            is_pc = False
+            for pc_name in self.pc_normalized:
+                if pc_name in normalized_guest or normalized_guest in pc_name:
+                    is_pc = True
+                    break
+            
+            if is_pc:
+                self.pc_members.append(guest)
+            elif guest['comment_text'] and guest['comment_text'].strip() and guest['comment_text'] != 'nan':
+                self.comment_guests.append(guest)
+            else:
+                self.regular_guests.append(guest)
+        
+        # Отладочный вывод
+        print(f"DEBUG: Всего гостей: {len(guests)}")
+        print(f"DEBUG: Члены ПК: {len(self.pc_members)}")
+        print(f"DEBUG: С комментариями: {len(self.comment_guests)}")
+        print(f"DEBUG: Обычные: {len(self.regular_guests)}")
+        print(f"DEBUG: Комнат всего: {len(rooms)}")
+        print(f"DEBUG: Одноместных: {len(self._get_single_rooms())}")
+        print(f"DEBUG: Двухместных: {len(self._get_double_rooms())}")
+        
+        for guest in guests:
             guest['comment_text'] = guest.get('comment', '')
             if pd.isna(guest['comment_text']):
                 guest['comment_text'] = ''
