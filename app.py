@@ -70,7 +70,6 @@ if not st.session_state.data_loaded:
             
             if non_residents_count > 0:
                 st.write("**Нерезиденты (проверьте, правильно ли определено):**")
-                # Проверяем наличие колонки 'Выбор тарифа за проживание'
                 tariff_col = None
                 for col in guests_df.columns:
                     if 'Выбор тарифа' in str(col):
@@ -90,7 +89,6 @@ if not st.session_state.data_loaded:
                 st.write("**Пример проверки для первого гостя:**")
                 st.write(f"ФИО: {first_guest.get('ФИО', 'N/A')}")
                 
-                # Показываем комнаты, которые отметил гость
                 st.write("Отмеченные комнаты:")
                 room_cols = [col for col in raw.columns if 'Комната' in str(col) and 'ночь' in str(col)]
                 found_rooms = False
@@ -206,7 +204,7 @@ def create_floor_layout(allocation_df, rooms_df):
     allocation_dict = {}
     for _, row in allocation_df.iterrows():
         room_id = row.get('room_id')
-        fio = row.get('fio')
+        fio = row.get('ФИО', row.get('fio', ''))
         if room_id and fio and room_id != "не проживает" and "требуется" not in str(room_id):
             if room_id not in allocation_dict:
                 allocation_dict[room_id] = []
@@ -415,8 +413,10 @@ def enforce_manual_rules(result_df, guests_df, rooms_list):
     # Создаем словари для быстрого поиска
     room_map = {}
     for _, row in result_df.iterrows():
-        if row['room_id'] not in ['не проживает', 'нет мест', 'требуется ручная обработка']:
-            room_map[row['fio']] = row['room_id']
+        room_id = row.get('room_id', '')
+        fio = row.get('ФИО', row.get('fio', ''))
+        if room_id not in ['не проживает', 'нет мест', 'требуется ручная обработка'] and fio:
+            room_map[fio] = room_id
     
     st.info("🔧 Применение ручных правил расселения...")
     
@@ -430,6 +430,8 @@ def enforce_manual_rules(result_df, guests_df, rooms_list):
     
     if rules_applied:
         st.success(f"✅ Применено {len(rules_applied)} ручных правил")
+    else:
+        st.info("Ручные правила не применялись")
     
     return result_df
 
@@ -462,10 +464,10 @@ st.markdown("---")
 
 # Таблица с гостями
 st.subheader("📋 Список гостей")
-st.dataframe(guests_df, use_container_width=True)
+st.dataframe(guests_df, width="stretch")
 
 # Кнопка расселения
-if st.button("🚀 Расселить", type="primary", use_container_width=True):
+if st.button("🚀 Расселить", type="primary", width="stretch"):
     with st.spinner("Идет расселение..."):
         result, debug = smart_solve(
             residents.to_dict("records"),
@@ -524,7 +526,7 @@ if st.button("🚀 Расселить", type="primary", use_container_width=True
     st.session_state.final_result_df = final_result
     
     # Создаем layout
-    allocated_guests = final_result[final_result["room_id"].apply(lambda x: x not in ['не проживает', 'нет мест', 'требуется ручная обработка'])]
+    allocated_guests = final_result[final_result["room_id"].apply(lambda x: str(x) not in ['не проживает', 'нет мест', 'требуется ручная обработка'])]
     if len(allocated_guests) > 0 and len(rooms_df) > 0:
         st.session_state.layout = create_floor_layout(allocated_guests, rooms_df)
     
@@ -574,18 +576,19 @@ if st.session_state.final_result_df is not None:
     
     # ТАБЛИЦА С РЕЗУЛЬТАТАМИ
     st.subheader("📋 Таблица расселения")
-    display_columns = ['fio', 'room_id', 'room_capacity', 'Дата заезда', 'Дата отъезда', 'comment']
+    display_columns = ['ФИО', 'room_id', 'room_capacity', 'Дата заезда', 'Дата отъезда', 'comment']
     existing_display = [col for col in display_columns if col in st.session_state.final_result_df.columns]
-    st.dataframe(st.session_state.final_result_df[existing_display], use_container_width=True)
+    st.dataframe(st.session_state.final_result_df[existing_display], width="stretch")
     
     # Отдельно показываем гостей, требующих ручной обработки
     manual_guests = st.session_state.final_result_df[
-        st.session_state.final_result_df['room_id'].apply(lambda x: x in ['требуется ручная обработка', 'нет мест'])
+        st.session_state.final_result_df['room_id'].apply(lambda x: str(x) in ['требуется ручная обработка', 'нет мест'])
     ]
     if len(manual_guests) > 0:
         st.warning(f"⚠️ {len(manual_guests)} гостей требуют ручной обработки расселения")
         with st.expander("Показать список для ручной обработки"):
-            st.dataframe(manual_guests[['fio', 'comment']], use_container_width=True)
+            if 'ФИО' in manual_guests.columns and 'comment' in manual_guests.columns:
+                st.dataframe(manual_guests[['ФИО', 'comment']], width="stretch")
     
     # Кнопка для экспорта в Excel
     if st.session_state.layout:
