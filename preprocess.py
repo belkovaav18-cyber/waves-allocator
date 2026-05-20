@@ -2,77 +2,6 @@ import pandas as pd
 import re
 from datetime import datetime
 
-# Словарь для определения пола по имени (из таблицы регистрации)
-GENDER_DICT = {
-    # Женские имена
-    'александра': 'Ж', 'алина': 'Ж', 'анна': 'Ж', 'варвара': 'Ж', 'валентина': 'Ж',
-    'екатерина': 'Ж', 'елена': 'Ж', 'мария': 'Ж', 'наталия': 'Ж', 'полина': 'Ж',
-    'софья': 'Ж', 'софия': 'Ж', 'ольга': 'Ж', 'татьяна': 'Ж', 'ирина': 'Ж',
-    'светлана': 'Ж', 'надежда': 'Ж', 'любовь': 'Ж', 'вера': 'Ж', 'юлия': 'Ж',
-    'ксения': 'Ж', 'дарина': 'Ж', 'диана': 'Ж', 'евгения': 'Ж', 'екатерина': 'Ж',
-    'елена': 'Ж', 'елизавета': 'Ж', 'инна': 'Ж', 'карина': 'Ж', 'лариса': 'Ж',
-    'лидия': 'Ж', 'людмила': 'Ж', 'маргарита': 'Ж', 'марина': 'Ж', 'надежда': 'Ж',
-    'оксана': 'Ж', 'рита': 'Ж', 'снежана': 'Ж', 'таисия': 'Ж', 'ульяна': 'Ж',
-    'алена': 'Ж', 'алёна': 'Ж', 'ангелина': 'Ж', 'арина': 'Ж', 'василиса': 'Ж',
-    'вероника': 'Ж', 'виктория': 'Ж', 'галина': 'Ж', 'дарина': 'Ж', 'дарья': 'Ж',
-    
-    # Мужские имена
-    'александр': 'М', 'андрей': 'М', 'алексей': 'М', 'анатолий': 'М', 'артем': 'М',
-    'артём': 'М', 'борис': 'М', 'вадим': 'М', 'валентин': 'М', 'валерий': 'М',
-    'василий': 'М', 'виктор': 'М', 'владимир': 'М', 'владислав': 'М', 'вячеслав': 'М',
-    'геннадий': 'М', 'георгий': 'М', 'герман': 'М', 'глеб': 'М', 'григорий': 'М',
-    'даниил': 'М', 'денис': 'М', 'дмитрий': 'М', 'евгений': 'М', 'егор': 'М',
-    'иван': 'М', 'игорь': 'М', 'илья': 'М', 'кирилл': 'М', 'константин': 'М',
-    'леонид': 'М', 'максим': 'М', 'михаил': 'М', 'никита': 'М', 'николай': 'М',
-    'олег': 'М', 'павел': 'М', 'петр': 'М', 'пётр': 'М', 'роман': 'М',
-    'сергей': 'М', 'станислав': 'М', 'степан': 'М', 'тимофей': 'М', 'федор': 'М',
-    'федор': 'М', 'филипп': 'М', 'эдуард': 'М', 'юрий': 'М', 'ярослав': 'М',
-    'аркадий': 'М', 'арсений': 'М', 'артур': 'М', 'богдан': 'М', 'вениамин': 'М',
-    'виталий': 'М', 'всеволод': 'М', 'вячеслав': 'М', 'григорий': 'М', 'давид': 'М',
-    'данила': 'М', 'демид': 'М', 'добрыня': 'М', 'ефим': 'М', 'захар': 'М',
-    'игнат': 'М', 'иосиф': 'М', 'карл': 'М', 'клим': 'М', 'кузьма': 'М',
-    'макар': 'М', 'матвей': 'М', 'мирон': 'М', 'модест': 'М', 'назар': 'М',
-    'остап': 'М', 'платон': 'М', 'прохор': 'М', 'родион': 'М', 'савелий': 'М',
-    'семен': 'М', 'симон': 'М', 'спартак': 'М', 'тарас': 'М', 'трофим': 'М',
-    'феликс': 'М', 'эрик': 'М', 'юлиан': 'М', 'яков': 'М'
-}
-
-def guess_gender_by_name(fio):
-    """Определить пол по имени"""
-    if not fio or pd.isna(fio):
-        return "не указан"
-    
-    fio_str = str(fio).lower()
-    
-    # Убираем текст в скобках
-    fio_str = re.sub(r'\([^)]*\)', '', fio_str)
-    # Убираем знаки препинания
-    fio_str = re.sub(r'[^\w\s]', '', fio_str)
-    
-    parts = fio_str.split()
-    
-    # Ищем имя (обычно второе слово или после фамилии)
-    for i, part in enumerate(parts):
-        # Пропускаем фамилию (обычно первое слово)
-        if i == 0 and len(parts) > 1:
-            continue
-        if part in GENDER_DICT:
-            return GENDER_DICT[part]
-        # Проверяем сокращенные имена (Саша, Миша и т.д.)
-        for name, gender in GENDER_DICT.items():
-            if part.startswith(name[:3]) and len(part) >= 3:
-                return gender
-    
-    # Если не нашли имя, проверяем окончание отчества или фамилии
-    if len(parts) >= 1:
-        last_word = parts[-1]
-        if last_word.endswith(('овна', 'евна', 'инична')):
-            return 'Ж'
-        if last_word.endswith(('ович', 'евич', 'ич')):
-            return 'М'
-    
-    return "не указан"
-
 def calculate_age(birth_date):
     if pd.isna(birth_date) or birth_date == "":
         return None
@@ -208,26 +137,22 @@ def preprocess_guests(raw_df, registration_df):
     
     guests_df = raw_df.copy()
     
-    # Создаем словарь для быстрого поиска по фамилии и по ФИО
+    # Словарь регистрации по фамилии
     registration_by_surname = {}
-    registration_by_fullname = {}
-    
     for _, reg_row in registration_df.iterrows():
         full_name = extract_full_name(reg_row)
         if full_name:
-            normalized_full = normalize_fio(full_name)
             surname = extract_surname(full_name)
-            registration_by_fullname[normalized_full] = reg_row
             if surname not in registration_by_surname:
                 registration_by_surname[surname] = []
-            registration_by_surname[surname].append((normalized_full, reg_row))
+            registration_by_surname[surname].append(reg_row)
     
     # Добавляем колонки
-    guests_df['возраст'] = None
+    guests_df['возраст'] = 0
     guests_df['город'] = "не указан"
     guests_df['должность'] = "не указана"
     guests_df['пол'] = "не указан"
-    guests_df['тариф'] = None
+    guests_df['тариф'] = 0
     guests_df['число_ночей'] = 0
     guests_df['стоимость'] = 0
     guests_df['email'] = ""
@@ -244,7 +169,7 @@ def preprocess_guests(raw_df, registration_df):
         # Тариф и ночи
         tariff = extract_tariff(guest_row)
         nights = calculate_nights(guest_row)
-        guests_df.loc[idx, 'тариф'] = tariff
+        guests_df.loc[idx, 'тариф'] = tariff if tariff else 0
         guests_df.loc[idx, 'число_ночей'] = nights
         if tariff and nights:
             guests_df.loc[idx, 'стоимость'] = tariff * nights
@@ -256,48 +181,29 @@ def preprocess_guests(raw_df, registration_df):
         if not is_res:
             continue
         
-        normalized_guest = normalize_fio(guest_fio)
-        guest_surname = extract_surname(guest_fio)
-        
-        best_match = None
-        
-        # 1. Пробуем точное совпадение по нормализованному ФИО
-        if normalized_guest in registration_by_fullname:
-            best_match = registration_by_fullname[normalized_guest]
-        else:
-            # 2. Пробуем поиск по фамилии
-            if guest_surname in registration_by_surname:
-                for reg_full, reg_row in registration_by_surname[guest_surname]:
-                    reg_name_parts = reg_full.split()
-                    if len(reg_name_parts) >= 1 and reg_name_parts[0] == guest_surname:
-                        best_match = reg_row
-                        break
-        
-        if best_match is not None:
-            birth_date = best_match.get('Дата рождения')
-            age = calculate_age(birth_date)
-            city = extract_city(best_match)
-            position = extract_position(best_match)
-            gender = extract_gender(best_match)
-            
-            guests_df.loc[idx, 'возраст'] = age
-            guests_df.loc[idx, 'город'] = city
-            guests_df.loc[idx, 'должность'] = position
-            guests_df.loc[idx, 'пол'] = gender
-            guests_df.loc[idx, 'email'] = best_match.get('Почта', '')
-            guests_df.loc[idx, 'телефон'] = best_match.get('Номер телефона для связи', '')
-            guests_df.loc[idx, 'организация'] = best_match.get('Полное название организации', '')
-        else:
-            # Если не нашли в регистрации, определяем пол по имени
-            guessed_gender = guess_gender_by_name(guest_fio)
-            guests_df.loc[idx, 'пол'] = guessed_gender
+        # Поиск в регистрации по фамилии
+        surname = extract_surname(guest_fio)
+        if surname in registration_by_surname:
+            for reg_row in registration_by_surname[surname]:
+                birth_date = reg_row.get('Дата рождения')
+                age = calculate_age(birth_date)
+                city = extract_city(reg_row)
+                position = extract_position(reg_row)
+                gender = extract_gender(reg_row)
+                
+                guests_df.loc[idx, 'возраст'] = age if age else 0
+                guests_df.loc[idx, 'город'] = city
+                guests_df.loc[idx, 'должность'] = position
+                guests_df.loc[idx, 'пол'] = gender
+                guests_df.loc[idx, 'email'] = reg_row.get('Почта', '')
+                guests_df.loc[idx, 'телефон'] = reg_row.get('Номер телефона для связи', '')
+                guests_df.loc[idx, 'организация'] = reg_row.get('Полное название организации', '')
+                break
     
     # Комментарий
     if 'Комментарий (например, пожелания по расселению)' in guests_df.columns:
         guests_df['comment'] = guests_df['Комментарий (например, пожелания по расселению)'].astype(str)
     else:
         guests_df['comment'] = ""
-    
-    guests_df = guests_df.fillna("")
     
     return guests_df
