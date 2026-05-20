@@ -202,20 +202,35 @@ class RoomAllocator:
         
         return allocations
     
-    def solve(self):
-        """Основной метод расселения"""
-        all_allocations = []
-        
+  def solve(self):
+    """Основной метод расселения"""
+    all_allocations = []
+    
+    # 1. Расселяем членов программного комитета
+    if self.pc_members:
         pc_allocations = self.allocate_pc_members()
         all_allocations.extend(pc_allocations)
-        
+        print(f"DEBUG: Расселено членов ПК: {len(pc_allocations)}")
+    
+    # 2. Обрабатываем гостей с комментариями
+    if self.comment_guests:
         comment_allocations = self.allocate_with_comments(self.comment_guests)
         all_allocations.extend(comment_allocations)
-        
+        print(f"DEBUG: Обработано с комментариями: {len(comment_allocations)}")
+    
+    # 3. Расселяем остальных по городам и возрасту
+    if self.regular_guests:
         regular_allocations = self.allocate_by_city_and_age(self.regular_guests)
         all_allocations.extend(regular_allocations)
-        
-        return pd.DataFrame(all_allocations)
+        print(f"DEBUG: Расселено обычных: {len(regular_allocations)}")
+    
+    print(f"DEBUG: Всего allocation записей: {len(all_allocations)}")
+    
+    if not all_allocations:
+        # Если никого не расселили, создаем пустой DataFrame с правильными колонками
+        return pd.DataFrame(columns=['ФИО', 'room_id', 'room_capacity', 'comment'])
+    
+    return pd.DataFrame(all_allocations)
     
     def get_debug_info(self):
         """Получить отладочную информацию"""
