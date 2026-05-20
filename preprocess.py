@@ -66,7 +66,6 @@ def normalize_fio(fio):
     return normalized
 
 def extract_tariff(guest_row):
-    """Извлечь тариф из колонки Выбор тарифа за проживание"""
     for col in guest_row.index:
         if 'Выбор тарифа за проживание' in str(col):
             val = guest_row.get(col, '')
@@ -85,12 +84,9 @@ def extract_tariff(guest_row):
     return None
 
 def is_resident(guest_row):
-    # Проверяем тариф
     tariff = extract_tariff(guest_row)
     if tariff == 0:
         return False
-    
-    # Проверяем отметки комнат
     for col in guest_row.index:
         col_str = str(col)
         if 'Комната' in col_str and 'ночь' in col_str:
@@ -100,6 +96,18 @@ def is_resident(guest_row):
                 if val_str not in ['', 'нет', '-', 'false', 'nan', 'не буду проживать']:
                     return True
     return False
+
+def calculate_nights(guest_row):
+    nights = 0
+    for col in guest_row.index:
+        col_str = str(col)
+        if 'Комната' in col_str and 'ночь' in col_str:
+            value = guest_row.get(col, '')
+            if pd.notna(value) and str(value).strip():
+                val_str = str(value).strip().lower()
+                if val_str not in ['', 'нет', '-', 'false', 'nan', 'не буду проживать']:
+                    nights += 1
+    return nights
 
 def clean_dataframe(df):
     df = df.copy()
@@ -131,6 +139,8 @@ def preprocess_guests(raw_df, registration_df):
     guests_df['должность'] = "не указана"
     guests_df['пол'] = "не указан"
     guests_df['тариф'] = None
+    guests_df['число_ночей'] = 0
+    guests_df['стоимость'] = 0
     guests_df['email'] = ""
     guests_df['телефон'] = ""
     guests_df['организация'] = ""
@@ -142,11 +152,15 @@ def preprocess_guests(raw_df, registration_df):
             guests_df.loc[idx, 'resident'] = False
             continue
         
-        # Определяем тариф
+        # Тариф и ночи
         tariff = extract_tariff(guest_row)
+        nights = calculate_nights(guest_row)
         guests_df.loc[idx, 'тариф'] = tariff
+        guests_df.loc[idx, 'число_ночей'] = nights
+        if tariff and nights:
+            guests_df.loc[idx, 'стоимость'] = tariff * nights
         
-        # Определяем резидента
+        # Резидент
         is_res = is_resident(guest_row)
         guests_df.loc[idx, 'resident'] = is_res
         
@@ -155,7 +169,7 @@ def preprocess_guests(raw_df, registration_df):
         
         normalized_guest = normalize_fio(guest_fio)
         
-        # Ищем в регистрации
+        # Поиск в регистрации
         best_match = None
         best_match_key = None
         
