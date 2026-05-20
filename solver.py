@@ -8,7 +8,7 @@ class RoomAllocator:
         self.guests = guests
         self.room_capacity = {r['room_id']: r['вместимость'] for r in rooms}
         
-        # Программный комитет
+        # Программный комитет (полные ФИО)
         self.program_committee = [
             "Козарь А.В.", "Калиш А.Н.", "Архипов Р.М.", "Балакший В.И.",
             "Белотелов В.И.", "Боголюбов А.Н.", "Бородачев Л.В.", "Бугай А.Н.",
@@ -19,24 +19,14 @@ class RoomAllocator:
             "Шандаров С.М."
         ]
         
-        # Организационный комитет
-        self.organizing_committee = [
-            "Белокуров В.В.", "Макаров В.А.", "Федянин А.А.", "Калиш А.Н.",
-            "Безменова А.Е.", "Дьяконов Е.А.", "Игнатьева Д.О.", "Князев Г.А.",
-            "Крохмаль А.А.", "Лапина А.В.", "Цысарь С.А.", "Кабак Е.В.",
-            "Коньков Д.В.", "Отинова А.В.", "Юшков В.В.", "Кукушкин Д.С.",
-            "Левкин Г.Ю.", "Трунцов И.Д."
+        # Организационный комитет (фамилии из скрина)
+        self.organizing_committee_surnames = [
+            "Белокуров", "Макаров", "Федянин", "Калиш", "Безменова", "Дьяконов",
+            "Игнатьева", "Князев", "Крохмаль", "Лапина", "Цысарь", "Кабак",
+            "Коньков", "Отинова", "Юшков", "Кукушкин", "Левкин", "Трунцов"
         ]
         
-        # Пары
-        self.couples = [
-            ('Камчатнов Анатолий Михайлович', 'Камчатнова Валентина Александровна'),
-            ('Балуян Тигран Григорьевич', 'Попкова Анна Андреевна'),
-            ('Сапожников Максим Викторович', 'Сапожникова Мария Александровна'),
-            ('Рязанов Валерий Владимирович', 'Рязанова Ирина Вячеславовна')
-        ]
-        
-        # Трешки и группы
+        # Предопределенные группы (пары и тройки из комментариев)
         self.predefined_groups = [
             {'guests': ['Вьюгинова Алена Александровна (докладчик), Новик Александр Александрович (сопровожд.), Вьюгинов Сергей Николаевич (сопровожд.)',
                         'Новик Александр Александрович', 'Вьюгинов Сергей Николаевич'], 'size': 3},
@@ -57,18 +47,22 @@ class RoomAllocator:
         
         # Сбор информации о гостях
         self.guest_info = {}
-        self.pc_guests_single = []  # ПК просит одноместный
-        self.pc_guests_regular = []  # ПК без пожеланий
-        self.org_guests = []
-        self.regular_guests = []
+        self.org_guests = []      # Оргкомитет
+        self.pc_guests_single = []   # ПК с запросом на одноместный
+        self.pc_guests_regular = []  # ПК без запроса
+        self.tariff_high = []      # Тариф 5000/6100
+        self.tariff_low = []       # Тариф 3782/3100
+        self.regular = []          # Остальные
         
         for guest in guests:
             fio = guest.get('ФИО', guest.get('fio', ''))
             if not fio:
                 continue
             
+            # Базовая информация
             self.guest_info[fio] = {
                 'fio': fio,
+                'surname': self._extract_surname(fio),
                 'age': guest.get('возраст', 0) or 0,
                 'city': guest.get('город', 'не указан'),
                 'gender': guest.get('пол', 'не указан'),
@@ -79,48 +73,73 @@ class RoomAllocator:
                 'nights': guest.get('число_ночей', 0) or 0,
                 'cost': guest.get('стоимость', 0) or 0,
                 'single_request': False,
-                'preferred_building': None
+                'preferred_building': None,
+                'preferred_floor': None
             }
             
             comment = self.guest_info[fio]['comment'].lower()
             
+            # Пожелание по этажу
+            floor_match = re.search(r'(\d+)\s*этаж', comment)
+            if floor_match:
+                self.guest_info[fio]['preferred_floor'] = floor_match.group(1)
+            
+            # Пожелание по корпусу
+            if 'красный' in comment or 'корпус №1' in comment or 'корпус 1' in comment:
+                self.guest_info[fio]['preferred_building'] = '1'
+            if 'желтый' in comment or 'корпус №2' in comment or 'корпус 2' in comment:
+                self.guest_info[fio]['preferred_building'] = '2'
+            
+            # Запрос на одноместное размещение
             if any(w in comment for w in ['без подселения', 'одноместный', 'не подселять']):
                 self.guest_info[fio]['single_request'] = True
             
-            if 'красный' in comment or 'корпус №1' in comment:
-                self.guest_info[fio]['preferred_building'] = '1'
-            if 'желтый' in comment or 'корпус №2' in comment:
+            # Категоризация
+            is_org = self._is_organizing_committee(fio)
+            is_pc = self._is_program_committee(fio)
+            
+            if is_org:
+                # Оргкомитет → желтый корпус
+                self.org_guests.append(fio)
                 self.guest_info[fio]['preferred_building'] = '2'
-            
-            normalized_fio = self._normalize_name(fio)
-            
-            # Проверка на программный комитет
-            is_pc = False
-            for pc_name in self.program_committee:
-                if self._normalize_name(pc_name) in normalized_fio or normalized_fio in self._normalize_name(pc_name):
-                    is_pc = True
-                    break
-            
-            if is_pc:
+            elif is_pc:
                 if self.guest_info[fio]['single_request']:
                     self.pc_guests_single.append(fio)
                 else:
                     self.pc_guests_regular.append(fio)
-                continue
-            
-            # Проверка на организационный комитет
-            is_org = False
-            for org_name in self.organizing_committee:
-                if self._normalize_name(org_name) in normalized_fio or normalized_fio in self._normalize_name(org_name):
-                    is_org = True
-                    break
-            
-            if is_org:
-                self.org_guests.append(fio)
-                self.guest_info[fio]['preferred_building'] = '2'
-                continue
-            
-            self.regular_guests.append(fio)
+            elif self.guest_info[fio]['tariff'] in [5000, 6100]:
+                self.tariff_high.append(fio)
+                self.guest_info[fio]['single_request'] = True
+            elif self.guest_info[fio]['tariff'] in [3782, 3100]:
+                self.tariff_low.append(fio)
+            else:
+                self.regular.append(fio)
+    
+    def _extract_surname(self, fio):
+        """Извлекает фамилию из ФИО"""
+        if not fio:
+            return ""
+        # Убираем текст в скобках
+        fio = re.sub(r'\([^)]*\)', '', str(fio))
+        # Берем первое слово
+        parts = fio.strip().split()
+        return parts[0] if parts else ""
+    
+    def _is_organizing_committee(self, fio):
+        """Проверка, входит ли гость в оргкомитет (по фамилии)"""
+        surname = self._extract_surname(fio)
+        for org_surname in self.organizing_committee_surnames:
+            if org_surname.lower() == surname.lower():
+                return True
+        return False
+    
+    def _is_program_committee(self, fio):
+        """Проверка, входит ли гость в программный комитет"""
+        normalized_fio = self._normalize_name(fio)
+        for pc_name in self.program_committee:
+            if self._normalize_name(pc_name) in normalized_fio or normalized_fio in self._normalize_name(pc_name):
+                return True
+        return False
     
     def _normalize_name(self, name):
         if not name:
@@ -129,79 +148,76 @@ class RoomAllocator:
         name = re.sub(r'[^\w\s]', '', name)
         return name.replace(' ', '').replace('ё', 'е')
     
-    def _is_couple(self, g1, g2):
-        for c1, c2 in self.couples:
-            if (g1 == c1 and g2 == c2) or (g1 == c2 and g2 == c1):
-                return True
-        return False
-    
-    def _get_rooms_by_capacity(self, capacity, building=None, exclude=None):
+    def _get_rooms_by_capacity(self, capacity, building=None, floor=None, exclude=None):
+        """Получить комнаты по критериям"""
         rooms = [r for r in self.rooms if r['вместимость'] == capacity]
         if building:
             rooms = [r for r in rooms if str(r['room_id']).startswith(building)]
+        if floor:
+            rooms = [r for r in rooms if str(r['room_id']).split('-')[1].startswith(floor) if '-' in str(r['room_id'])]
         if exclude:
             rooms = [r for r in rooms if r['room_id'] not in exclude]
         return rooms
     
-    def _allocate_individual(self, guests_list, used_rooms, prefer_single=False, building=None):
-        allocations = []
-        for guest in guests_list:
-            room = None
-            if prefer_single:
-                rooms_avail = self._get_rooms_by_capacity(1, building, used_rooms)
-                if rooms_avail:
-                    room = rooms_avail[0]
-            if not room:
-                for cap in [1, 2]:
-                    rooms_avail = self._get_rooms_by_capacity(cap, building, used_rooms)
-                    if rooms_avail:
-                        room = rooms_avail[0]
-                        break
-            
-            if room:
-                used_rooms.add(room['room_id'])
-                allocations.append({
-                    'ФИО': guest,
-                    'room_id': room['room_id'],
-                    'room_capacity': room['вместимость'],
-                    'comment': self.guest_info[guest]['comment'],
-                    'возраст': self.guest_info[guest]['age'],
-                    'пол': self.guest_info[guest]['gender'],
-                    'должность': self.guest_info[guest]['position'],
-                    'город': self.guest_info[guest]['city'],
-                    'организация': self.guest_info[guest]['organization'],
-                    'тариф': self.guest_info[guest]['tariff'],
-                    'число_ночей': self.guest_info[guest]['nights'],
-                    'стоимость': self.guest_info[guest]['cost']
-                })
-            else:
-                allocations.append({
-                    'ФИО': guest,
-                    'room_id': 'нет мест',
-                    'room_capacity': 0,
-                    'comment': self.guest_info[guest]['comment'],
-                    'возраст': self.guest_info[guest]['age'],
-                    'пол': self.guest_info[guest]['gender'],
-                    'должность': self.guest_info[guest]['position'],
-                    'город': self.guest_info[guest]['city'],
-                    'организация': self.guest_info[guest]['organization'],
-                    'тариф': self.guest_info[guest]['tariff'],
-                    'число_ночей': self.guest_info[guest]['nights'],
-                    'стоимость': self.guest_info[guest]['cost']
-                })
-        return allocations
+    def _find_best_room(self, guest, used_rooms, prefer_single=False, force_building=None):
+        """Находит лучшую комнату для гостя с учетом всех пожеланий"""
+        preferred_building = force_building or self.guest_info[guest].get('preferred_building')
+        preferred_floor = self.guest_info[guest].get('preferred_floor')
+        
+        # Приоритеты вместимости
+        if prefer_single:
+            capacities = [1, 2]
+        else:
+            capacities = [2, 3, 1]
+        
+        for cap in capacities:
+            rooms_avail = self._get_rooms_by_capacity(cap, preferred_building, preferred_floor, used_rooms)
+            if rooms_avail:
+                return rooms_avail[0]
+        
+        # Если не нашли с этажом, ищем без этажа
+        for cap in capacities:
+            rooms_avail = self._get_rooms_by_capacity(cap, preferred_building, None, used_rooms)
+            if rooms_avail:
+                return rooms_avail[0]
+        
+        # Если не нашли с корпусом, ищем без корпуса
+        for cap in capacities:
+            rooms_avail = self._get_rooms_by_capacity(cap, None, None, used_rooms)
+            if rooms_avail:
+                return rooms_avail[0]
+        
+        return None
+    
+    def _add_allocation(self, allocations, guest, room):
+        """Добавляет запись о расселении"""
+        allocations.append({
+            'ФИО': guest,
+            'room_id': room['room_id'] if room else 'нет мест',
+            'room_capacity': room['вместимость'] if room else 0,
+            'comment': self.guest_info[guest]['comment'],
+            'возраст': self.guest_info[guest]['age'],
+            'пол': self.guest_info[guest]['gender'],
+            'должность': self.guest_info[guest]['position'],
+            'город': self.guest_info[guest]['city'],
+            'организация': self.guest_info[guest]['organization'],
+            'тариф': self.guest_info[guest]['tariff'],
+            'число_ночей': self.guest_info[guest]['nights'],
+            'стоимость': self.guest_info[guest]['cost']
+        })
     
     def solve(self):
         allocations = []
         used_rooms = set()
         allocated = set()
         
-        # 1. Предопределенные группы (трешки и пары)
+        # 1. Предопределенные группы (пары и тройки)
         for group in self.predefined_groups:
-            group_guests = [g for g in group['guests'] if g in self.guest_info]
+            group_guests = [g for g in group['guests'] if g in self.guest_info and g not in allocated]
             if not group_guests:
                 continue
             
+            # Ищем комнату подходящего размера
             room = None
             for cap in [group['size'], 3, 2]:
                 rooms_avail = self._get_rooms_by_capacity(cap, exclude=used_rooms)
@@ -211,104 +227,56 @@ class RoomAllocator:
             
             if room:
                 used_rooms.add(room['room_id'])
-                for g in group_guests:
-                    allocations.append({
-                        'ФИО': g,
-                        'room_id': room['room_id'],
-                        'room_capacity': room['вместимость'],
-                        'comment': self.guest_info[g]['comment'],
-                        'возраст': self.guest_info[g]['age'],
-                        'пол': self.guest_info[g]['gender'],
-                        'должность': self.guest_info[g]['position'],
-                        'город': self.guest_info[g]['city'],
-                        'организация': self.guest_info[g]['organization'],
-                        'тариф': self.guest_info[g]['tariff'],
-                        'число_ночей': self.guest_info[g]['nights'],
-                        'стоимость': self.guest_info[g]['cost']
-                    })
-                    allocated.add(g)
+                for guest in group_guests:
+                    self._add_allocation(allocations, guest, room)
+                    allocated.add(guest)
             else:
-                for g in group_guests:
-                    allocations.append({
-                        'ФИО': g,
-                        'room_id': 'требуется ручная обработка',
-                        'room_capacity': 0,
-                        'comment': self.guest_info[g]['comment'],
-                        'возраст': self.guest_info[g]['age'],
-                        'пол': self.guest_info[g]['gender'],
-                        'должность': self.guest_info[g]['position'],
-                        'город': self.guest_info[g]['city'],
-                        'организация': self.guest_info[g]['organization'],
-                        'тариф': self.guest_info[g]['tariff'],
-                        'число_ночей': self.guest_info[g]['nights'],
-                        'стоимость': self.guest_info[g]['cost']
-                    })
-                    allocated.add(g)
+                for guest in group_guests:
+                    self._add_allocation(allocations, guest, None)
+                    allocated.add(guest)
         
-        # 2. Программный комитет с запросом на одноместный
-        pc_single_alloc = self._allocate_individual(
-            [g for g in self.pc_guests_single if g not in allocated], 
-            used_rooms, prefer_single=True
-        )
-        for a in pc_single_alloc:
-            allocated.add(a['ФИО'])
-        allocations.extend(pc_single_alloc)
-        
-        # 3. Программный комитет без пожеланий (в общую сортировку)
-        pc_regular_alloc = self._allocate_individual(
-            [g for g in self.pc_guests_regular if g not in allocated], 
-            used_rooms, prefer_single=False
-        )
-        for a in pc_regular_alloc:
-            allocated.add(a['ФИО'])
-        allocations.extend(pc_regular_alloc)
-        
-        # 4. Организационный комитет (желтый корпус)
-        org_not_allocated = [g for g in self.org_guests if g not in allocated]
-        for guest in org_not_allocated:
-            room = None
-            for cap in [1, 2, 3]:
-                rooms_avail = self._get_rooms_by_capacity(cap, '2', used_rooms)
-                if rooms_avail:
-                    room = rooms_avail[0]
-                    break
-            
+        # 2. Оргкомитет (желтый корпус 2)
+        for guest in self.org_guests:
+            if guest in allocated:
+                continue
+            room = self._find_best_room(guest, used_rooms, force_building='2')
             if room:
                 used_rooms.add(room['room_id'])
-                allocations.append({
-                    'ФИО': guest,
-                    'room_id': room['room_id'],
-                    'room_capacity': room['вместимость'],
-                    'comment': self.guest_info[guest]['comment'],
-                    'возраст': self.guest_info[guest]['age'],
-                    'пол': self.guest_info[guest]['gender'],
-                    'должность': self.guest_info[guest]['position'],
-                    'город': self.guest_info[guest]['city'],
-                    'организация': self.guest_info[guest]['organization'],
-                    'тариф': self.guest_info[guest]['tariff'],
-                    'число_ночей': self.guest_info[guest]['nights'],
-                    'стоимость': self.guest_info[guest]['cost']
-                })
-                allocated.add(guest)
-            else:
-                allocations.append({
-                    'ФИО': guest,
-                    'room_id': 'нет мест',
-                    'room_capacity': 0,
-                    'comment': self.guest_info[guest]['comment'],
-                    'возраст': self.guest_info[guest]['age'],
-                    'пол': self.guest_info[guest]['gender'],
-                    'должность': self.guest_info[guest]['position'],
-                    'город': self.guest_info[guest]['city'],
-                    'организация': self.guest_info[guest]['organization'],
-                    'тариф': self.guest_info[guest]['tariff'],
-                    'число_ночей': self.guest_info[guest]['nights'],
-                    'стоимость': self.guest_info[guest]['cost']
-                })
-                allocated.add(guest)
+            self._add_allocation(allocations, guest, room)
+            allocated.add(guest)
         
-        # 5. Остальные гости - группировка по полу, городу, возрасту
-        remaining = [g for g in self.regular_guests if g not in allocated]
+        # 3. Программный комитет с запросом на одноместный
+        for guest in self.pc_guests_single:
+            if guest in allocated:
+                continue
+            room = self._find_best_room(guest, used_rooms, prefer_single=True)
+            if room:
+                used_rooms.add(room['room_id'])
+            self._add_allocation(allocations, guest, room)
+            allocated.add(guest)
+        
+        # 4. Программный комитет без запроса
+        for guest in self.pc_guests_regular:
+            if guest in allocated:
+                continue
+            room = self._find_best_room(guest, used_rooms, prefer_single=False)
+            if room:
+                used_rooms.add(room['room_id'])
+            self._add_allocation(allocations, guest, room)
+            allocated.add(guest)
+        
+        # 5. Высокий тариф (5000/6100) - без подселения
+        for guest in self.tariff_high:
+            if guest in allocated:
+                continue
+            room = self._find_best_room(guest, used_rooms, prefer_single=True)
+            if room:
+                used_rooms.add(room['room_id'])
+            self._add_allocation(allocations, guest, room)
+            allocated.add(guest)
+        
+        # 6. Остальные (низкий тариф и обычные) - группировка по полу, городу, возрасту
+        remaining = [g for g in self.tariff_low + self.regular if g not in allocated]
         
         # Группируем по полу и городу
         male_by_city = defaultdict(list)
@@ -320,12 +288,10 @@ class RoomAllocator:
             age = self.guest_info[fio]['age']
             if gender == 'Ж':
                 female_by_city[city].append((fio, age))
-            elif gender == 'М':
-                male_by_city[city].append((fio, age))
-            else:
+            else:  # 'М' или 'не указан' - в мужские
                 male_by_city[city].append((fio, age))
         
-        # Сортируем комнаты
+        # Доступные комнаты (2-х и 3-х местные)
         available_rooms = [r for r in self.rooms if r['room_id'] not in used_rooms and r['вместимость'] >= 2]
         available_rooms.sort(key=lambda x: x['вместимость'])
         room_idx = 0
@@ -333,26 +299,15 @@ class RoomAllocator:
         def allocate_by_gender(groups):
             nonlocal room_idx
             for city, guests_list in groups.items():
+                # Сортируем по возрасту
                 guests_list.sort(key=lambda x: x[1])
                 i = 0
                 while i < len(guests_list):
                     if room_idx >= len(available_rooms):
+                        # Нет комнат - заселяем по одному
                         for j in range(i, len(guests_list)):
                             fio, _ = guests_list[j]
-                            allocations.append({
-                                'ФИО': fio,
-                                'room_id': 'нет мест',
-                                'room_capacity': 0,
-                                'comment': self.guest_info[fio]['comment'],
-                                'возраст': self.guest_info[fio]['age'],
-                                'пол': self.guest_info[fio]['gender'],
-                                'должность': self.guest_info[fio]['position'],
-                                'город': self.guest_info[fio]['city'],
-                                'организация': self.guest_info[fio]['organization'],
-                                'тариф': self.guest_info[fio]['tariff'],
-                                'число_ночей': self.guest_info[fio]['nights'],
-                                'стоимость': self.guest_info[fio]['cost']
-                            })
+                            self._add_allocation(allocations, fio, None)
                         return
                     
                     room = available_rooms[room_idx]
@@ -364,20 +319,7 @@ class RoomAllocator:
                         j += 1
                     
                     for fio in group:
-                        allocations.append({
-                            'ФИО': fio,
-                            'room_id': room['room_id'],
-                            'room_capacity': capacity,
-                            'comment': self.guest_info[fio]['comment'],
-                            'возраст': self.guest_info[fio]['age'],
-                            'пол': self.guest_info[fio]['gender'],
-                            'должность': self.guest_info[fio]['position'],
-                            'город': self.guest_info[fio]['city'],
-                            'организация': self.guest_info[fio]['organization'],
-                            'тариф': self.guest_info[fio]['tariff'],
-                            'число_ночей': self.guest_info[fio]['nights'],
-                            'стоимость': self.guest_info[fio]['cost']
-                        })
+                        self._add_allocation(allocations, fio, room)
                     
                     room_idx += 1
                     i = j
@@ -385,7 +327,7 @@ class RoomAllocator:
         allocate_by_gender(male_by_city)
         allocate_by_gender(female_by_city)
         
-        # 6. Нерезиденты
+        # 7. Нерезиденты
         for guest in self.guests:
             fio = guest.get('ФИО', guest.get('fio', ''))
             if fio and fio not in [a['ФИО'] for a in allocations]:
@@ -408,10 +350,13 @@ class RoomAllocator:
     
     def get_debug_info(self):
         return {
+            'org_guests': len(self.org_guests),
+            'org_list': self.org_guests[:10],
             'pc_single': len(self.pc_guests_single),
             'pc_regular': len(self.pc_guests_regular),
-            'org_guests': len(self.org_guests),
-            'regular_guests': len(self.regular_guests)
+            'tariff_high': len(self.tariff_high),
+            'tariff_low': len(self.tariff_low),
+            'regular': len(self.regular)
         }
 
 
