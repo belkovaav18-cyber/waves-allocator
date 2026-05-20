@@ -1,86 +1,107 @@
 import pandas as pd
-from solver_debug import solve_simple as solve
-from feasibility import find_impossible_groups, split_groups
-
+from solver import solve_allocation
 
 def smart_solve(guests, rooms):
-    """Обертка для solve с обработкой ошибок и отладкой"""
-    debug = {
-        "total_guests": len(guests),
-        "total_rooms": len(rooms),
-        "must_be_single": [],
-        "yellow_building_people": [],
-        "red_building_people": [],
-        "no_subleaser_people": [],
-        "together_requests": [],
-        "tariff_stats": {"without_subleaser": 0, "with_subleaser": 0},
-        "status_stats": {"student": 0, "postgraduate": 0, "professor": 0, "other": 0},
-        "age_stats": {"min": None, "max": None, "avg": None}
-    }
+    """
+    Умное расселение с обработкой всех правил
     
-    ages = []
+    Args:
+        guests: список гостей (словари)
+        rooms: список комнат (словари)
     
-    for guest in guests:
-        if guest.get("must_be_single_room"):
-            debug["must_be_single"].append(guest["fio"])
-        
-        if guest.get("preferred_building") == "yellow":
-            debug["yellow_building_people"].append(guest["fio"])
-        elif guest.get("preferred_building") == "red":
-            debug["red_building_people"].append(guest["fio"])
-        
-        if guest.get("require_no_subleaser"):
-            debug["no_subleaser_people"].append(guest["fio"])
-        
-        if guest.get("group_hard"):
-            for h in guest["group_hard"]:
-                if h not in ["NO_SUBLEASE", "MUST_BE_SINGLE"]:
-                    debug["together_requests"].append(f"{guest['fio']} с {h}")
-        
-        tariff_type = guest.get("tariff_type")
-        if tariff_type == "without_subleaser":
-            debug["tariff_stats"]["without_subleaser"] += 1
-        elif tariff_type == "with_subleaser":
-            debug["tariff_stats"]["with_subleaser"] += 1
-        
-        status = guest.get("status", "other")
-        if status in debug["status_stats"]:
-            debug["status_stats"][status] += 1
-        else:
-            debug["status_stats"]["other"] += 1
-        
-        age = guest.get("age")
-        if age:
-            ages.append(age)
+    Returns:
+        result_df: DataFrame с результатами расселения
+        debug_info: словарь с отладочной информацией
+    """
     
-    if ages:
-        debug["age_stats"]["min"] = min(ages)
-        debug["age_stats"]["max"] = max(ages)
-        debug["age_stats"]["avg"] = sum(ages) / len(ages)
+    # Проверяем входные данные
+    if not guests:
+        return pd.DataFrame({'error': ['Нет гостей для расселения']}), {}
     
-    print("\n" + "="*50)
-    print("DEBUG INFO")
-    print("="*50)
-    print(f"Total guests: {debug['total_guests']}")
-    print(f"Must be single: {len(debug['must_be_single'])}")
-    print(f"Yellow building forced: {len(debug['yellow_building_people'])}")
-    print(f"No sublease required: {len(debug['no_subleaser_people'])}")
-    print(f"Together requests: {len(debug['together_requests'])}")
-    print(f"Tariff stats: {debug['tariff_stats']}")
-    print(f"Status stats: {debug['status_stats']}")
-    print(f"Age stats: {debug['age_stats']}")
-    print("="*50 + "\n")
+    if not rooms:
+        return pd.DataFrame({'error': ['Нет комнат для расселения']}), {}
     
+    # Создаем копии для работы
+    guests_list = guests.copy() if isinstance(guests, list) else guests.to_dict('records')
+    rooms_list = rooms.copy() if isinstance(rooms, list) else rooms.to_dict('records')
+    
+    # Запускаем алгоритм расселения
     try:
-        result = solve(guests, rooms)
+        result_df, debug_info = solve_allocation(guests_list, rooms_list)
         
-        if "error" in result.columns or len(result) == 0:
-            debug["error"] = "No feasible solution"
-            return result, debug
+        # Добавляем дополнительную информацию
+        if 'comment' in result_df.columns:
+            # Отмечаем гостей с комментариями
+            result_df['has_comment'] = result_df['comment'].apply(
+                lambda x: bool(x and str(x).strip() and str(x).strip() != 'nan')
+            )
         
-        return result, debug
+        # Добавляем информацию о членах программного комитета
+        program_committee_names = [
+            "Козарь А.В.", "Калиш А.Н.", "Архипов Р.М.", "Балакший В.И.",
+            "Белотелов В.И.", "Боголюбов А.Н.", "Бородачев Л.В.", "Бугай А.Н.",
+            "Денисов В.И.", "Звездин А.К.", "Игнатьева Д.О.", "Короновский А.А.",
+            "Котова С.П.", "Макаров В.А.", "Пирогов Ю.А.", "Пятаков А.П.",
+            "Руденко О.В.", "Сазонов С.В.", "Сапожников О.А.", "Тимофеев И.В.",
+            "Храмов А.Е.", "Цысарь С.А.", "Чашечкин Ю.Д.", "Черепенин В.А.",
+            "Шандаров С.М."
+        ]
+        
+        def is_pc_member(fio):
+            if pd.isna(fio):
+                return False
+            fio_str = str(fio).lower().replace('.', '').replace(' ', '')
+            for pc_name in program_committee_names:
+                pc_normalized = pc_name.lower().replace('.', '').replace(' ', '')
+                if pc_normalized in fio_str or fio_str in pc_normalized:
+                    return True
+            return False
+        
+        result_df['is_program_committee'] = result_df['fio'].apply(is_pc_member)
+        
+        return result_df, debug_info
         
     except Exception as e:
-        print(f"Error in solver: {e}")
-        debug["error"] = str(e)
-        return pd.DataFrame([{"error": str(e)}]), debug
+        import traceback
+        traceback.print_exc()
+        return pd.DataFrame({'error': [str(e)]}), {}
+
+def optimize_allocation(result_df, rooms_df):
+    """
+    Оптимизация расселения после первоначального распределения
+    """
+    # Создаем словарь занятости комнат
+    room_occupancy = {}
+    for _, row in result_df.iterrows():
+        room_id = row.get('room_id')
+        if room_id and room_id != 'не проживает' and room_id != 'нет мест' and room_id != 'требуется ручная обработка':
+            if room_id not in room_occupancy:
+                room_occupancy[room_id] = []
+            room_occupancy[room_id].append(row['fio'])
+    
+    # Создаем словарь вместимости комнат
+    room_capacity = {r['room_id']: r['вместимость'] for r in rooms_df.to_dict('records')}
+    
+    # Ищем возможности для оптимизации
+    optimizations = []
+    
+    for room_id, occupants in room_occupancy.items():
+        capacity = room_capacity.get(room_id, 2)
+        
+        # Если комната заполнена не полностью
+        if len(occupants) < capacity:
+            # Ищем гостей, которых можно сюда добавить
+            for _, row in result_df.iterrows():
+                other_room = row.get('room_id')
+                if other_room and other_room != room_id and other_room != 'не проживает':
+                    # Проверяем, можно ли переместить
+                    other_occupants = room_occupancy.get(other_room, [])
+                    if len(other_occupants) > 1:
+                        optimizations.append({
+                            'guest': row['fio'],
+                            'from_room': other_room,
+                            'to_room': room_id,
+                            'reason': f'Оптимизация заполнения комнаты {room_id}'
+                        })
+    
+    return optimizations
