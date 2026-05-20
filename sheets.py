@@ -109,21 +109,19 @@ def save_results_with_details(sheet_id, sheet_name, result_df, raw_df, guests_df
         fio_col = 'ФИО' if 'ФИО' in save_df.columns else 'fio' if 'fio' in save_df.columns else None
         
         if fio_col:
-            # Добавляем колонки
-            ages = [guests_info.get(fio, {}).get('возраст', '') for fio in save_df[fio_col]]
-            positions = [guests_info.get(fio, {}).get('должность', '') for fio in save_df[fio_col]]
-            cities = [guests_info.get(fio, {}).get('город', '') for fio in save_df[fio_col]]
-            orgs = [guests_info.get(fio, {}).get('организация', '') for fio in save_df[fio_col]]
-            emails = [guests_info.get(fio, {}).get('email', '') for fio in save_df[fio_col]]
-            phones = [guests_info.get(fio, {}).get('телефон', '') for fio in save_df[fio_col]]
-            
-            # Вставляем колонки после ФИО
-            save_df.insert(1, 'возраст', ages)
-            save_df.insert(2, 'должность', positions)
-            save_df.insert(3, 'город', cities)
-            save_df.insert(4, 'организация', orgs)
-            save_df.insert(5, 'email', emails)
-            save_df.insert(6, 'телефон', phones)
+            # Добавляем данные (только если колонок еще нет)
+            if 'возраст' not in save_df.columns:
+                save_df['возраст'] = [guests_info.get(fio, {}).get('возраст', '') for fio in save_df[fio_col]]
+            if 'должность' not in save_df.columns:
+                save_df['должность'] = [guests_info.get(fio, {}).get('должность', '') for fio in save_df[fio_col]]
+            if 'город' not in save_df.columns:
+                save_df['город'] = [guests_info.get(fio, {}).get('город', '') for fio in save_df[fio_col]]
+            if 'организация' not in save_df.columns:
+                save_df['организация'] = [guests_info.get(fio, {}).get('организация', '') for fio in save_df[fio_col]]
+            if 'email' not in save_df.columns:
+                save_df['email'] = [guests_info.get(fio, {}).get('email', '') for fio in save_df[fio_col]]
+            if 'телефон' not in save_df.columns:
+                save_df['телефон'] = [guests_info.get(fio, {}).get('телефон', '') for fio in save_df[fio_col]]
         
         # Добавляем даты если их нет
         if 'Дата заезда' not in save_df.columns:
@@ -133,6 +131,17 @@ def save_results_with_details(sheet_id, sheet_name, result_df, raw_df, guests_df
         
         # Заполняем пустые значения
         save_df = save_df.fillna('')
+        
+        # Переупорядочиваем колонки для удобства
+        preferred_order = [fio_col, 'возраст', 'должность', 'город', 'организация', 
+                          'room_id', 'room_capacity', 'Дата заезда', 'Дата отъезда', 
+                          'comment', 'email', 'телефон']
+        
+        existing_cols = [col for col in preferred_order if col in save_df.columns]
+        other_cols = [col for col in save_df.columns if col not in existing_cols]
+        final_cols = existing_cols + other_cols
+        
+        save_df = save_df[final_cols]
         
         # Сохраняем в worksheet
         data = [save_df.columns.values.tolist()] + save_df.values.tolist()
