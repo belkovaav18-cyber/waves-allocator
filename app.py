@@ -581,22 +581,26 @@ if st.session_state.final_result_df is not None:
     else:
         st.info("Нет данных для отображения плана этажей")
     
-    # ТАБЛИЦА С РЕЗУЛЬТАТАМИ
+   # ТАБЛИЦА С РЕЗУЛЬТАТАМИ
     st.subheader("📋 Таблица расселения")
-    display_columns = ['ФИО', 'room_id', 'room_capacity', 'Дата заезда', 'Дата отъезда', 'comment']
-    existing_display = [col for col in display_columns if col in st.session_state.final_result_df.columns]
-    st.dataframe(st.session_state.final_result_df[existing_display], width="stretch")
     
-    # Отдельно показываем гостей, требующих ручной обработки
-    if 'room_id' in st.session_state.final_result_df.columns:
-        manual_guests = st.session_state.final_result_df[
-            st.session_state.final_result_df['room_id'].apply(lambda x: str(x) in ['требуется ручная обработка', 'нет мест'])
-        ]
-        if len(manual_guests) > 0:
-            st.warning(f"⚠️ {len(manual_guests)} гостей требуют ручной обработки расселения")
-            with st.expander("Показать список для ручной обработки"):
-                if 'ФИО' in manual_guests.columns and 'comment' in manual_guests.columns:
-                    st.dataframe(manual_guests[['ФИО', 'comment']], width="stretch")
+    # Проверяем, какие колонки есть в результате
+    result_columns = st.session_state.final_result_df.columns.tolist()
+    
+    # Определяем колонку с ФИО
+    fio_col = None
+    if 'ФИО' in result_columns:
+        fio_col = 'ФИО'
+    elif 'fio' in result_columns:
+        fio_col = 'fio'
+    
+    if fio_col:
+        display_columns = [fio_col, 'room_id', 'room_capacity', 'Дата заезда', 'Дата отъезда', 'comment']
+        existing_display = [col for col in display_columns if col in st.session_state.final_result_df.columns]
+        st.dataframe(st.session_state.final_result_df[existing_display], width="stretch")
+    else:
+        st.warning("Не найдена колонка с ФИО в результатах")
+        st.write("Доступные колонки:", result_columns)
     
     # Кнопка для экспорта в Excel
     if st.session_state.layout:
