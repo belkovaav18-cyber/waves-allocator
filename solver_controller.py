@@ -57,7 +57,11 @@ def smart_solve(guests, rooms):
                     return True
             return False
         
-        result_df['is_program_committee'] = result_df['fio'].apply(is_pc_member)
+        # Используем правильное название колонки - 'ФИО'
+        if 'ФИО' in result_df.columns:
+            result_df['is_program_committee'] = result_df['ФИО'].apply(is_pc_member)
+        elif 'fio' in result_df.columns:
+            result_df['is_program_committee'] = result_df['fio'].apply(is_pc_member)
         
         return result_df, debug_info
         
@@ -77,7 +81,10 @@ def optimize_allocation(result_df, rooms_df):
         if room_id and room_id != 'не проживает' and room_id != 'нет мест' and room_id != 'требуется ручная обработка':
             if room_id not in room_occupancy:
                 room_occupancy[room_id] = []
-            room_occupancy[room_id].append(row['fio'])
+            # Используем правильное название колонки
+            fio = row.get('ФИО', row.get('fio', ''))
+            if fio:
+                room_occupancy[room_id].append(fio)
     
     # Создаем словарь вместимости комнат
     room_capacity = {r['room_id']: r['вместимость'] for r in rooms_df.to_dict('records')}
@@ -97,8 +104,9 @@ def optimize_allocation(result_df, rooms_df):
                     # Проверяем, можно ли переместить
                     other_occupants = room_occupancy.get(other_room, [])
                     if len(other_occupants) > 1:
+                        fio = row.get('ФИО', row.get('fio', ''))
                         optimizations.append({
-                            'guest': row['fio'],
+                            'guest': fio,
                             'from_room': other_room,
                             'to_room': room_id,
                             'reason': f'Оптимизация заполнения комнаты {room_id}'
