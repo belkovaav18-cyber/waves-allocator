@@ -22,6 +22,9 @@ class RoomAllocator:
         # Предопределенные группы
         self.predefined_groups = self._get_predefined_groups()
         
+        # Группы пар (муж+жен) - только они могут жить вместе разнополые
+        self.couples = self._get_couples()
+        
         # Разделяем гостей
         self.pc_members = []
         self.regular_guests = []
@@ -32,7 +35,6 @@ class RoomAllocator:
             if not fio:
                 continue
             
-            # Получаем возраст, обрабатываем None
             age = guest.get('возраст', 0)
             if age is None or age == '':
                 age = 0
@@ -42,6 +44,7 @@ class RoomAllocator:
                 'age': age,
                 'city': guest.get('город', 'не указан'),
                 'position': guest.get('должность', ''),
+                'gender': guest.get('пол', 'не указан'),
                 'comment': str(guest.get('comment', '')),
                 'single_request': False,
                 'preferred_building': None
@@ -49,17 +52,14 @@ class RoomAllocator:
             
             comment = self.guest_info[fio]['comment'].lower()
             
-            # Проверка на одноместное размещение
             if any(word in comment for word in ['без подселения', 'одноместный', 'не подселять']):
                 self.guest_info[fio]['single_request'] = True
             
-            # Проверка на корпус
             if 'красный' in comment or 'корпус №1' in comment:
                 self.guest_info[fio]['preferred_building'] = '1'
             if 'желтый' in comment or 'корпус №2' in comment:
                 self.guest_info[fio]['preferred_building'] = '2'
             
-            # Проверка на членство в ПК
             normalized_fio = self._normalize_name(fio)
             is_pc = False
             for pc_name in self.program_committee:
@@ -81,8 +81,46 @@ class RoomAllocator:
         name = name.replace(' ', '').replace('ё', 'е')
         return name
     
+    def _get_couples(self):
+        """Пары (мужчина+женщина) из комментариев"""
+        couples = []
+        
+        # Камчатнов и Камчатнова
+        couples.append(('Камчатнов Анатолий Михайлович', 'Камчатнова Валентина Александровна'))
+        # Балуян и Попкова
+        couples.append(('Балуян Тигран Григорьевич', 'Попкова Анна Андреевна'))
+        # Сапожников и Сапожникова
+        couples.append(('Сапожников Максим Викторович', 'Сапожникова Мария Александровна'))
+        # Рязанов и Рязанова
+        couples.append(('Рязанов Валерий Владимирович', 'Рязанова Ирина Вячеславовна'))
+        
+        return couples
+    
+    def _is_couple(self, guest1, guest2):
+        """Проверка, являются ли гости парой"""
+        for c1, c2 in self.couples:
+            if (guest1 == c1 and guest2 == c2) or (guest1 == c2 and guest2 == c1):
+                return True
+        return False
+    
+    def _can_share_room(self, guest1, guest2):
+        """Могут ли гости жить в одной комнате"""
+        g1_gender = self.guest_info.get(guest1, {}).get('gender', 'не указан')
+        g2_gender = self.guest_info.get(guest2, {}).get('gender', 'не указан')
+        
+        # Если пол не указан - разрешаем
+        if g1_gender == 'не указан' or g2_gender == 'не указан':
+            return True
+        
+        # Если разнополые - только если они пара
+        if g1_gender != g2_gender:
+            return self._is_couple(guest1, guest2)
+        
+        # Однополые - можно
+        return True
+    
     def _get_predefined_groups(self):
-        """Предопределенные группы из комментариев"""
+        """Предопределенные группы"""
         groups = []
         
         # Группа 1: Вьюгинова, Новик, Вьюгинов (3 человека)
@@ -94,7 +132,7 @@ class RoomAllocator:
             'preferred_capacity': 3
         })
         
-        # Группа 2: Очиров, Белоножко (2 человека - Чернов не найден)
+        # Группа 2: Очиров, Белоножко
         groups.append({
             'guests': ['Очиров Артем Александрович', 'Белоножко Дмитрий Федорович'],
             'size': 2,
@@ -178,11 +216,11 @@ class RoomAllocator:
             'preferred_capacity': 2
         })
         
-        # Группа 14: Тимофеев и Федченко
+        # Группа 14: Юровская и Булдакова (девушки)
         groups.append({
-            'guests': ['Тимофеев Иван Владимирович'],
-            'size': 1,
-            'preferred_capacity': 1
+            'guests': ['Юровская Софья Константиновна', 'Булдакова Анастасия Вячеславовна'],
+            'size': 2,
+            'preferred_capacity': 2
         })
         
         return groups
@@ -196,7 +234,6 @@ class RoomAllocator:
         return rooms
     
     def solve(self):
-        """Основной метод расселения"""
         allocations = []
         used_rooms = set()
         allocated_guests = set()
@@ -205,6 +242,27 @@ class RoomAllocator:
         for group in self.predefined_groups:
             group_guests = [g for g in group['guests'] if g in self.guest_info]
             if not group_guests:
+                continue
+            
+            # Проверяем совместимость по полу внутри группы
+            valid_group = True
+            for i in range(len(group_guests)):
+                for j in range(i+1, len(group_guests)):
+                    if not self._can_share_room(group_guests[i], group_guests[j]):
+                        valid_group = False
+                        break
+                if not valid_group:
+                    break
+            
+            if not valid_group:
+                for guest in group_guests:
+                    allocations.append({
+                        'ФИО': guest,
+                        'room_id': 'ошибка: несовместимы по полу',
+                        'room_capacity': 0,
+                        'comment': self.guest_info.get(guest, {}).get('comment', '')
+                    })
+                    allocated_guests.add(guest)
                 continue
             
             # Ищем комнату
@@ -226,7 +284,6 @@ class RoomAllocator:
                     })
                     allocated_guests.add(guest)
             else:
-                # Нет комнаты - временное размещение
                 for guest in group_guests:
                     allocations.append({
                         'ФИО': guest,
@@ -287,59 +344,59 @@ class RoomAllocator:
                 })
                 allocated_guests.add(fio)
         
-        # 4. Расселяем оставшихся по городам
+        # 4. Расселяем оставшихся с учетом пола
         remaining = [fio for fio in self.guest_info.keys() if fio not in allocated_guests]
         
-        # Группируем по городам
-        city_groups = defaultdict(list)
+        # Группируем по городу и полу
+        city_gender_groups = defaultdict(lambda: defaultdict(list))
         for fio in remaining:
             city = self.guest_info[fio]['city']
+            gender = self.guest_info[fio]['gender']
             age = self.guest_info[fio]['age'] or 0
-            city_groups[city].append((fio, age))
+            city_gender_groups[city][gender].append((fio, age))
         
-        # Сортируем комнаты
         available_rooms = [r for r in self.rooms if r['room_id'] not in used_rooms and r['вместимость'] >= 2]
         available_rooms.sort(key=lambda x: x['вместимость'])
         
         room_idx = 0
-        for city, guests_list in city_groups.items():
-            # Сортируем по возрасту (обрабатываем None)
-            guests_list.sort(key=lambda x: x[1] if x[1] is not None else 0)
-            i = 0
-            while i < len(guests_list):
-                if room_idx >= len(available_rooms):
-                    # Нет комнат
-                    for j in range(i, len(guests_list)):
-                        fio, _ = guests_list[j]
-                        allocations.append({
-                            'ФИО': fio,
-                            'room_id': 'нет мест',
-                            'room_capacity': 0,
-                            'comment': self.guest_info.get(fio, {}).get('comment', '')
-                        })
-                    break
-                
-                room = available_rooms[room_idx]
-                capacity = room['вместимость']
-                
-                group = []
-                j = i
-                while len(group) < capacity and j < len(guests_list):
-                    group.append(guests_list[j][0])
-                    j += 1
-                
-                for g_fio in group:
-                    allocations.append({
-                        'ФИО': g_fio,
-                        'room_id': room['room_id'],
-                        'room_capacity': capacity,
-                        'comment': self.guest_info.get(g_fio, {}).get('comment', '')
-                    })
-                
-                room_idx += 1
-                i = j
         
-        # 5. Добавляем всех остальных гостей (кто еще не добавлен)
+        for city, gender_groups in city_gender_groups.items():
+            for gender, guests_list in gender_groups.items():
+                guests_list.sort(key=lambda x: x[1] if x[1] is not None else 0)
+                i = 0
+                while i < len(guests_list):
+                    if room_idx >= len(available_rooms):
+                        for j in range(i, len(guests_list)):
+                            fio, _ = guests_list[j]
+                            allocations.append({
+                                'ФИО': fio,
+                                'room_id': 'нет мест',
+                                'room_capacity': 0,
+                                'comment': self.guest_info.get(fio, {}).get('comment', '')
+                            })
+                        break
+                    
+                    room = available_rooms[room_idx]
+                    capacity = room['вместимость']
+                    
+                    group = []
+                    j = i
+                    while len(group) < capacity and j < len(guests_list):
+                        group.append(guests_list[j][0])
+                        j += 1
+                    
+                    for g_fio in group:
+                        allocations.append({
+                            'ФИО': g_fio,
+                            'room_id': room['room_id'],
+                            'room_capacity': capacity,
+                            'comment': self.guest_info.get(g_fio, {}).get('comment', '')
+                        })
+                    
+                    room_idx += 1
+                    i = j
+        
+        # 5. Добавляем нерезидентов
         for guest in self.guests:
             fio = guest.get('ФИО', guest.get('fio', ''))
             if fio and fio not in [a['ФИО'] for a in allocations]:
