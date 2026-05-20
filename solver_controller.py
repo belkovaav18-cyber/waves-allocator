@@ -1,5 +1,4 @@
 import pandas as pd
-from solver import solve_allocation
 
 def smart_solve(guests, rooms):
     """
@@ -13,6 +12,8 @@ def smart_solve(guests, rooms):
         return pd.DataFrame({'error': ['Нет комнат для расселения']}), {}
     
     try:
+        # Простое распределение: селим по порядку в комнаты
+        from solver import solve_allocation
         result_df, debug_info = solve_allocation(guests, rooms)
         
         # Добавляем информацию о членах программного комитета
