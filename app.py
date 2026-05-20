@@ -391,50 +391,54 @@ def update_allocation():
 # РЕДАКТОР РАССЕЛЕНИЯ
 # =========================================================
 def manual_allocation_editor():
-    """Интерфейс для ручного расселения"""
+    """Интерфейс для ручного расселения с отображением жильцов в комнатах"""
     st.subheader("✏️ Ручное расселение")
     
     if st.session_state.final_result_df is None:
         st.warning("Сначала выполните автоматическое расселение")
         return
     
-    # Получаем данные для редактирования
     edit_df = st.session_state.final_result_df.copy()
-    
-    # Определяем колонку с ФИО
     fio_col = 'ФИО' if 'ФИО' in edit_df.columns else 'fio' if 'fio' in edit_df.columns else None
     
     if fio_col is None:
         st.error("Не найдена колонка с ФИО")
         return
     
-    # Фильтруем только резидентов
+    # Фильтруем резидентов
     residents_only = edit_df[edit_df["room_id"] != "не проживает"].copy()
     
     if len(residents_only) == 0:
         st.info("Нет резидентов для ручного расселения")
         return
     
-    # Создаем словарь свободных мест в комнатах
-    room_free_spots = {}
+    # Получаем актуальную информацию о комнатах из Google Sheets
+    try:
+        sheet = get_google_client().open_by_key(SHEET_ID)
+        result_sheet = sheet.worksheet("Result")
+        result_data = result_sheet.get_all_records()
+        current_df = pd.DataFrame(result_data)
+        if not current_df.empty and 'room_id' in current_df.columns:
+            # Обновляем локальную копию
+            for idx, row in residents_only.iterrows():
+                fio = row[fio_col]
+                current_row = current_df[current_df[fio_col] == fio]
+                if not current_row.empty:
+                    residents_only.loc[idx, 'room_id'] = current_row.iloc[0].get('room_id', row['room_id'])
+    except:
+        pass
+    
+    # Создаем словарь жильцов по комнатам
+    room_occupants = {}
     for _, row in residents_only.iterrows():
         room_id = row['room_id']
-        if room_id not in room_free_spots:
-            # Получаем вместимость комнаты
-            room_info = next((r for r in rooms if r['room_id'] == room_id), None)
-            capacity = room_info['вместимость'] if room_info else 2
-            room_free_spots[room_id] = {
-                'capacity': capacity,
-                'occupants': []
-            }
-        room_free_spots[room_id]['occupants'].append(row[fio_col])
+        fio = row[fio_col]
+        if room_id not in room_occupants:
+            room_occupants[room_id] = []
+        room_occupants[room_id].append(fio)
     
-    # Вычисляем свободные места
-    for room_id in room_free_spots:
-        room_free_spots[room_id]['free'] = room_free_spots[room_id]['capacity'] - len(room_free_spots[room_id]['occupants'])
-    
-    # Создаем интерфейс для каждого гостя
-    st.write(f"### Перемещение гостей ({len(residents_only)} человек)")
+    # Получаем вместимость комнат
+    room_capacity = {r['room_id']: r['вместимость'] for r in rooms}
     
     # Поиск гостя
     search_term = st.text_input("🔍 Поиск гостя по фамилии", placeholder="Введите фамилию...")
@@ -443,36 +447,53 @@ def manual_allocation_editor():
     if search_term:
         filtered_guests = residents_only[residents_only[fio_col].str.contains(search_term, case=False, na=False)]
     
-    # Для каждого гостя - выбор комнаты
     st.write(f"**Найдено гостей: {len(filtered_guests)}**")
     
-    # Создаем колонки для выбора
+    # Для каждого гостя
     for idx, (_, guest) in enumerate(filtered_guests.iterrows()):
-        col1, col2, col3 = st.columns([3, 2, 1])
+        col1, col2, col3 = st.columns([3, 3, 1])
         
         with col1:
             st.write(f"**{guest[fio_col]}**")
-            if guest.get('comment'):
+            if guest.get('comment') and str(guest['comment']) != 'nan':
                 st.caption(f"💬 {guest['comment'][:100]}...")
         
         with col2:
-            # Текущая комната
             current_room = guest['room_id']
-            current_capacity = guest.get('room_capacity', '')
-            st.write(f"Текущая: {current_room} (вм:{current_capacity})")
+            st.write(f"Текущая: **{current_room}** (вместимость: {room_capacity.get(current_room, '?')})")
             
-            # Выбор новой комнаты
-            # Сортируем комнаты: сначала свободные места
-            room_options = []
-            for room_id, info in room_free_spots.items():
-                if room_id != current_room or info['free'] > 0:
-                    status = f"свободно {info['free']}/{info['capacity']}" if info['free'] > 0 else "занято"
-                    room_options.append(f"{room_id} ({status})")
+            # Формируем список комнат с информацией о жильцах
+            room_options = ["--- оставить как есть ---"]
+            
+            # Сортируем комнаты по корпусу и номеру
+            sorted_rooms = sorted(rooms, key=lambda x: x['room_id'])
+            
+            for room in sorted_rooms:
+                room_id = room['room_id']
+                capacity = room['вместимость']
+                occupants = room_occupants.get(room_id, [])
+                free_spots = capacity - len(occupants)
+                
+                # Формируем описание
+                if room_id == current_room:
+                    status = "📍 текущая"
+                elif free_spots > 0:
+                    status = f"🟢 свободно {free_spots}/{capacity}"
                 else:
-                    room_options.append(f"{room_id} (занято)")
+                    status = "🔴 занято"
+                
+                # Список жильцов
+                if occupants:
+                    occupants_str = ", ".join([o.split()[0] for o in occupants[:2]])  # Только фамилии
+                    if len(occupants) > 2:
+                        occupants_str += f" +{len(occupants)-2}"
+                    room_label = f"{room_id} [{status}] 👥 {occupants_str}"
+                else:
+                    room_label = f"{room_id} [{status}] 🏠 пусто"
+                
+                room_options.append(room_label)
             
-            room_options.insert(0, "--- оставить как есть ---")
-            room_options.append("не проживает")
+            room_options.append("❌ не проживает")
             
             selected = st.selectbox(
                 "Новая комната",
@@ -483,17 +504,28 @@ def manual_allocation_editor():
             )
             
             if selected != "--- оставить как есть ---":
-                new_room = selected.split(" ")[0] if selected != "не проживает" else "не проживает"
+                if selected == "❌ не проживает":
+                    new_room = "не проживает"
+                else:
+                    new_room = selected.split("[")[0].strip()
                 
-                # Обновляем в DataFrame
+                # Обновляем в session_state
                 mask = st.session_state.final_result_df[fio_col] == guest[fio_col]
                 st.session_state.final_result_df.loc[mask, 'room_id'] = new_room
                 
                 if new_room != "не проживает":
-                    # Обновляем вместимость комнаты
                     room_info = next((r for r in rooms if r['room_id'] == new_room), None)
                     if room_info:
                         st.session_state.final_result_df.loc[mask, 'room_capacity'] = room_info['вместимость']
+                
+                # Обновляем локальный словарь жильцов
+                old_room = current_room
+                if old_room in room_occupants and guest[fio_col] in room_occupants[old_room]:
+                    room_occupants[old_room].remove(guest[fio_col])
+                if new_room != "не проживает":
+                    if new_room not in room_occupants:
+                        room_occupants[new_room] = []
+                    room_occupants[new_room].append(guest[fio_col])
                 
                 st.rerun()
         
@@ -504,8 +536,8 @@ def manual_allocation_editor():
         
         st.divider()
     
-    # Кнопка для массового обновления
-    col1, col2, col3 = st.columns(3)
+    # Кнопки действий
+    col1, col2, col3, col4 = st.columns(4)
     with col1:
         if st.button("💾 Сохранить все изменения", type="primary"):
             update_allocation()
@@ -519,7 +551,6 @@ def manual_allocation_editor():
     
     with col3:
         if st.button("📊 Показать статистику"):
-            # Статистика по комнатам
             stats = st.session_state.final_result_df[
                 st.session_state.final_result_df["room_id"] != "не проживает"
             ]['room_id'].value_counts()
@@ -527,6 +558,16 @@ def manual_allocation_editor():
             st.write(f"**Всего занято комнат:** {len(stats)}")
             st.write(f"**Среднее количество человек в комнате:** {stats.mean():.1f}")
             st.dataframe(stats.head(20))
+    
+    with col4:
+        # Показать свободные места
+        if st.button("🏠 Свободные места"):
+            st.write("### 🏠 Комнаты со свободными местами")
+            for room_id, occupants in room_occupants.items():
+                capacity = room_capacity.get(room_id, 2)
+                free = capacity - len(occupants)
+                if free > 0:
+                    st.write(f"**{room_id}**: свободно {free}/{capacity}, жильцы: {', '.join(occupants) if occupants else 'нет'}")
 
 
 # =========================================================
