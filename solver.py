@@ -1,7 +1,82 @@
 import pandas as pd
 import re
 from collections import defaultdict
-from comment_parser import comment_parser
+
+# =========================================================
+# ПАРСЕР КОММЕНТАРИЕВ (встроенный, без отдельного файла)
+# =========================================================
+
+class CommentParser:
+    """Парсер комментариев для извлечения пожеланий по расселению"""
+    
+    def __init__(self):
+        self.corpus_keywords = {
+            '1': ['красный', 'красном', 'красн', 'корпус №1', 'корпус 1', '1 корпус', '№1', 'красный корпус'],
+            '2': ['желтый', 'желтом', 'жёлтый', 'жёлтом', 'корпус №2', 'корпус 2', '2 корпус', '№2', 'желтый корпус']
+        }
+        self.floor_pattern = r'(\d+)\s*этаж[е]?'
+        self.single_keywords = [
+            'без подселения', 'без подселен', 'не подселять', 'один', 'одноместный',
+            'без соседей', 'одиночный', 'только один'
+        ]
+    
+    def clean_text(self, text):
+        if not text or text == 'nan':
+            return ''
+        text = str(text).lower()
+        text = re.sub(r'[^\w\s]', ' ', text)
+        text = re.sub(r'\s+', ' ', text).strip()
+        return text
+    
+    def extract_corpus(self, text):
+        if not text:
+            return None
+        text = self.clean_text(text)
+        for corpus_num, keywords in self.corpus_keywords.items():
+            for keyword in keywords:
+                if keyword in text:
+                    return corpus_num
+        return None
+    
+    def extract_floor(self, text):
+        if not text:
+            return None
+        text = self.clean_text(text)
+        match = re.search(self.floor_pattern, text)
+        if match:
+            return match.group(1)
+        return None
+    
+    def extract_single_request(self, text):
+        if not text:
+            return False
+        text = self.clean_text(text)
+        for keyword in self.single_keywords:
+            if keyword in text:
+                return True
+        return False
+    
+    def parse_comment(self, comment, fio):
+        if not comment or comment == 'nan':
+            return {
+                'preferred_building': None,
+                'preferred_floor': None,
+                'single_request': False
+            }
+        text = self.clean_text(comment)
+        return {
+            'preferred_building': self.extract_corpus(text),
+            'preferred_floor': self.extract_floor(text),
+            'single_request': self.extract_single_request(text)
+        }
+
+
+comment_parser = CommentParser()
+
+
+# =========================================================
+# ОСНОВНОЙ КЛАСС РАССЕЛЕНИЯ
+# =========================================================
 
 class RoomAllocator:
     def __init__(self, rooms, guests):
@@ -54,18 +129,16 @@ class RoomAllocator:
         self.tariff_high = []
         self.tariff_low = []
         self.regular = []
-        self.all_single_requests = []  # Все с запросом на одноместное
+        self.all_single_requests = []
         
         for guest in guests:
             fio = guest.get('ФИО', guest.get('fio', ''))
             if not fio:
                 continue
             
-            # Парсим комментарий
             comment = str(guest.get('comment', ''))
             parsed = comment_parser.parse_comment(comment, fio)
             
-            # Базовая информация
             self.guest_info[fio] = {
                 'fio': fio,
                 'surname': self._extract_surname(fio),
@@ -80,8 +153,7 @@ class RoomAllocator:
                 'cost': guest.get('стоимость', 0) or 0,
                 'single_request': parsed['single_request'],
                 'preferred_building': parsed['preferred_building'],
-                'preferred_floor': parsed['preferred_floor'],
-                'together_with': parsed['together_with']
+                'preferred_floor': parsed['preferred_floor']
             }
             
             # Категоризация
@@ -106,7 +178,6 @@ class RoomAllocator:
             else:
                 self.regular.append(fio)
             
-            # Если есть запрос на одноместное, добавляем в общий список
             if self.guest_info[fio]['single_request'] and fio not in self.all_single_requests:
                 self.all_single_requests.append(fio)
     
@@ -153,7 +224,6 @@ class RoomAllocator:
         preferred_floor = self.guest_info[guest].get('preferred_floor')
         single_request = self.guest_info[guest].get('single_request', False)
         
-        # Если нужна одноместная комната
         if single_request or prefer_single:
             capacities = [1, 2]
         else:
@@ -245,16 +315,14 @@ class RoomAllocator:
             self._add_allocation(allocations, guest, room)
             allocated.add(guest)
         
-        # 3. ВСЕ с запросом на одноместное (ПК, высокий тариф, комментарии)
+        # 3. ВСЕ с запросом на одноместное
         single_not_allocated = [g for g in self.all_single_requests if g not in allocated]
         
         for guest in single_not_allocated:
-            # Сначала ищем одноместную комнату
             single_rooms = self._get_rooms_by_capacity(1, exclude=used_rooms)
             if single_rooms:
                 room = single_rooms[0]
             else:
-                # Нет одноместных - ищем двухместную и заселяем одного
                 room = self._find_best_room(guest, used_rooms, prefer_single=True)
             
             if room:
@@ -262,7 +330,7 @@ class RoomAllocator:
             self._add_allocation(allocations, guest, room)
             allocated.add(guest)
         
-        # 4. ПК без запроса (кто еще не расселен)
+        # 4. ПК без запроса
         pc_regular_not_allocated = [g for g in self.pc_guests_regular if g not in allocated]
         for guest in pc_regular_not_allocated:
             room = self._find_best_room(guest, used_rooms, prefer_single=False)
