@@ -537,16 +537,18 @@ if st.button("🚀 Расселить", type="primary", width="stretch"):
     if len(allocated_guests) > 0 and len(rooms_df) > 0:
         st.session_state.layout = create_floor_layout(allocated_guests, rooms_df)
     
-    # Сохраняем в Google Sheets
+   # Сохраняем в Google Sheets
     try:
         save_results_with_details(
             SHEET_ID, 
             "Result", 
             final_result, 
-            raw
+            raw,
+            guests_df  # Добавляем guests_df
         )
     except Exception as e:
         st.warning(f"Не удалось сохранить в Google Sheets: {e}")
+
     
     st.success("✅ Готово! Результат сохранен")
     st.rerun()
