@@ -59,11 +59,29 @@ def extract_full_name(registration_row):
 def normalize_fio(fio):
     if pd.isna(fio) or fio == "":
         return ""
-    normalized = " ".join(str(fio).lower().split())
-    parts = normalized.split()
+    # Убираем все лишнее, оставляем только фамилию и имя
+    fio = str(fio).lower()
+    # Убираем скобки и содержимое в скобках
+    fio = re.sub(r'\([^)]*\)', '', fio)
+    # Убираем знаки препинания
+    fio = re.sub(r'[^\w\s]', '', fio)
+    # Убираем лишние пробелы
+    fio = " ".join(fio.split())
+    # Берем только первые два слова (фамилия и имя)
+    parts = fio.split()
     if len(parts) >= 2:
         return f"{parts[0]} {parts[1]}"
-    return normalized
+    return fio
+
+def extract_surname(fio):
+    """Извлекает только фамилию"""
+    if pd.isna(fio) or fio == "":
+        return ""
+    fio = str(fio).lower()
+    fio = re.sub(r'\([^)]*\)', '', fio)
+    fio = re.sub(r'[^\w\s]', '', fio)
+    parts = fio.split()
+    return parts[0] if parts else ""
 
 def extract_tariff(guest_row):
     for col in guest_row.index:
@@ -125,13 +143,19 @@ def preprocess_guests(raw_df, registration_df):
     
     guests_df = raw_df.copy()
     
-    # Словарь регистрации
-    registration_dict = {}
+    # Создаем словарь для быстрого поиска по фамилии и по ФИО
+    registration_by_surname = {}
+    registration_by_fullname = {}
+    
     for _, reg_row in registration_df.iterrows():
         full_name = extract_full_name(reg_row)
         if full_name:
-            normalized = normalize_fio(full_name)
-            registration_dict[normalized] = reg_row
+            normalized_full = normalize_fio(full_name)
+            surname = extract_surname(full_name)
+            registration_by_fullname[normalized_full] = reg_row
+            if surname not in registration_by_surname:
+                registration_by_surname[surname] = []
+            registration_by_surname[surname].append((normalized_full, reg_row))
     
     # Добавляем колонки
     guests_df['возраст'] = None
@@ -168,19 +192,28 @@ def preprocess_guests(raw_df, registration_df):
             continue
         
         normalized_guest = normalize_fio(guest_fio)
+        guest_surname = extract_surname(guest_fio)
         
-        # Поиск в регистрации
         best_match = None
-        best_match_key = None
         
-        for reg_key, reg_row in registration_dict.items():
-            guest_parts = normalized_guest.split()
-            reg_parts = reg_key.split()
-            if len(guest_parts) >= 2 and len(reg_parts) >= 2:
-                if guest_parts[0] == reg_parts[0] and guest_parts[1] == reg_parts[1]:
-                    best_match = reg_row
-                    best_match_key = reg_key
-                    break
+        # 1. Пробуем точное совпадение по нормализованному ФИО
+        if normalized_guest in registration_by_fullname:
+            best_match = registration_by_fullname[normalized_guest]
+        else:
+            # 2. Пробуем поиск по фамилии
+            if guest_surname in registration_by_surname:
+                for reg_full, reg_row in registration_by_surname[guest_surname]:
+                    # Проверяем, что имя начинается с той же буквы
+                    guest_name_parts = normalized_guest.split()
+                    reg_name_parts = reg_full.split()
+                    if len(guest_name_parts) >= 2 and len(reg_name_parts) >= 2:
+                        if guest_name_parts[0] == reg_name_parts[0]:
+                            # Фамилии совпадают, проверяем инициалы имени
+                            guest_init = guest_name_parts[1][0] if len(guest_name_parts[1]) > 0 else ''
+                            reg_init = reg_name_parts[1][0] if len(reg_name_parts[1]) > 0 else ''
+                            if guest_init == reg_init:
+                                best_match = reg_row
+                                break
         
         if best_match is not None:
             birth_date = best_match.get('Дата рождения')
@@ -196,8 +229,6 @@ def preprocess_guests(raw_df, registration_df):
             guests_df.loc[idx, 'email'] = best_match.get('Почта', '')
             guests_df.loc[idx, 'телефон'] = best_match.get('Номер телефона для связи', '')
             guests_df.loc[idx, 'организация'] = best_match.get('Полное название организации', '')
-            
-            del registration_dict[best_match_key]
     
     # Комментарий
     if 'Комментарий (например, пожелания по расселению)' in guests_df.columns:
