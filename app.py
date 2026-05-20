@@ -58,7 +58,45 @@ if not st.session_state.data_loaded:
         st.session_state.registration_df = registration_df
         st.session_state.guests_df = guests_df
         st.session_state.data_loaded = True
+        # После строки st.session_state.data_loaded = True, добавьте:
+
+# Отладочная информация о резидентах
+residents_count = len(guests_df[guests_df['resident'] == True])
+non_residents_count = len(guests_df[guests_df['resident'] == False])
+
+with st.expander("🔍 Отладочная информация о резидентах"):
+    st.write(f"Всего гостей: {len(guests_df)}")
+    st.write(f"Резиденты (будут жить): {residents_count}")
+    st.write(f"Нерезиденты (не будут жить): {non_residents_count}")
+    
+    if non_residents_count > 0:
+        st.write("**Нерезиденты (проверьте, правильно ли определено):**")
+        non_res = guests_df[guests_df['resident'] == False][['ФИО', 'Выбор тарифа за проживание']]
+        st.dataframe(non_res.head(10))
+    
+    # Показываем пример проверки для первого гостя
+    if len(guests_df) > 0:
+        first_guest = guests_df.iloc[0]
+        st.write("**Пример проверки для первого гостя:**")
+        st.write(f"ФИО: {first_guest.get('ФИО', 'N/A')}")
         
+        # Показываем комнаты, которые отметил гость
+        st.write("Отмеченные комнаты:")
+        room_cols = [col for col in raw.columns if 'Комната' in str(col) and 'ночь' in str(col)]
+        for col in room_cols:
+            val = first_guest.get(col, '')
+            if pd.notna(val) and str(val).strip() and str(val).strip().lower() not in ['', 'нет', '-', 'false', 'nan']:
+                st.write(f"  ✅ {col}: {val}")
+        
+        tariff_col = None
+        for col in raw.columns:
+            if 'Выбор тарифа' in str(col):
+                tariff_col = col
+                break
+        if tariff_col:
+            st.write(f"Тариф: {first_guest.get(tariff_col, 'не указан')}")
+        
+        st.write(f"**Резидент: {first_guest.get('resident', 'N/A')}**")
         st.success(f"✅ Загружено {len(guests_df)} гостей (из них резидентов: {len(guests_df[guests_df['resident'] == True])})")
 else:
     raw = st.session_state.raw
