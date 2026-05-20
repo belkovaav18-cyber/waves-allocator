@@ -3,6 +3,7 @@ from google.oauth2.service_account import Credentials
 import pandas as pd
 from datetime import datetime
 import streamlit as st
+import numpy as np
 
 def get_google_client():
     """Подключение к Google Sheets"""
@@ -68,6 +69,18 @@ def load_registration_data(sheet_id, tab_name):
         st.error(f"Ошибка загрузки данных регистрации: {e}")
         return pd.DataFrame()
 
+def convert_to_serializable(df):
+    """Преобразует DataFrame в сериализуемый формат"""
+    df = df.copy()
+    for col in df.columns:
+        # Преобразуем все в строки для безопасной сериализации
+        if col == 'возраст':
+            # Для возраста: пустые значения -> 0, остальные в int
+            df[col] = df[col].apply(lambda x: int(x) if pd.notna(x) and str(x).strip() and str(x) != 'nan' else 0)
+        else:
+            df[col] = df[col].apply(lambda x: str(x) if pd.notna(x) and str(x) != 'nan' else '')
+    return df
+
 def save_results_with_details(sheet_id, sheet_name, result_df, raw_df, guests_df):
     """Сохранить результаты расселения в Google Sheets"""
     client = get_google_client()
@@ -97,12 +110,13 @@ def save_results_with_details(sheet_id, sheet_name, result_df, raw_df, guests_df
             fio = row.get('ФИО', '')
             if fio:
                 guests_info[fio] = {
-                    'возраст': row.get('возраст', ''),
+                    'возраст': row.get('возраст', 0),
                     'должность': row.get('должность', ''),
                     'город': row.get('город', ''),
                     'организация': row.get('организация', ''),
                     'email': row.get('email', ''),
-                    'телефон': row.get('телефон', '')
+                    'телефон': row.get('телефон', ''),
+                    'пол': row.get('пол', '')
                 }
         
         # Определяем колонку с ФИО
@@ -111,7 +125,9 @@ def save_results_with_details(sheet_id, sheet_name, result_df, raw_df, guests_df
         if fio_col:
             # Добавляем данные (только если колонок еще нет)
             if 'возраст' not in save_df.columns:
-                save_df['возраст'] = [guests_info.get(fio, {}).get('возраст', '') for fio in save_df[fio_col]]
+                save_df['возраст'] = [guests_info.get(fio, {}).get('возраст', 0) for fio in save_df[fio_col]]
+            if 'пол' not in save_df.columns:
+                save_df['пол'] = [guests_info.get(fio, {}).get('пол', '') for fio in save_df[fio_col]]
             if 'должность' not in save_df.columns:
                 save_df['должность'] = [guests_info.get(fio, {}).get('должность', '') for fio in save_df[fio_col]]
             if 'город' not in save_df.columns:
@@ -132,8 +148,11 @@ def save_results_with_details(sheet_id, sheet_name, result_df, raw_df, guests_df
         # Заполняем пустые значения
         save_df = save_df.fillna('')
         
+        # Конвертируем в сериализуемый формат
+        save_df = convert_to_serializable(save_df)
+        
         # Переупорядочиваем колонки для удобства
-        preferred_order = [fio_col, 'возраст', 'должность', 'город', 'организация', 
+        preferred_order = [fio_col, 'пол', 'возраст', 'должность', 'город', 'организация', 
                           'room_id', 'room_capacity', 'Дата заезда', 'Дата отъезда', 
                           'comment', 'email', 'телефон']
         
@@ -170,6 +189,9 @@ def save_detailed_results(sheet_id, result_df):
         sheet_name = f"Расселение_{timestamp}"
         
         worksheet = sheet.add_worksheet(title=sheet_name, rows="1000", cols="50")
+        
+        # Конвертируем в сериализуемый формат
+        result_df = convert_to_serializable(result_df)
         
         # Сохраняем данные
         data = [result_df.columns.values.tolist()] + result_df.values.tolist()
