@@ -7,7 +7,7 @@ from openpyxl import load_workbook
 from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
 from openpyxl.utils.dataframe import dataframe_to_rows
 
-from sheets import load_guests, save_results_with_details, load_registration_data
+from sheets import load_guests, save_results_with_details, load_registration_data, get_google_client
 from preprocess import preprocess_guests
 from solver_controller import smart_solve
 from comment_engine import process_comments, display_comments_report
