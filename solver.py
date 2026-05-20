@@ -283,6 +283,27 @@ for group in self.predefined_groups:
         return None
     
     def _add_allocation(self, allocations, guest, room):
+            # Проверка вместимости перед добавлением
+    if room:
+        current_occupants = sum(1 for a in allocations if a['room_id'] == room['room_id'])
+        if current_occupants >= room['вместимость']:
+            print(f"ОШИБКА: Комната {room['room_id']} переполнена! Вместимость {room['вместимость']}, уже {current_occupants} чел, пытаемся добавить {guest}")
+            room = None  # Не добавляем в переполненную комнату
+    
+    allocations.append({
+        'ФИО': guest,
+        'room_id': room['room_id'] if room else 'нет мест',
+        'room_capacity': room['вместимость'] if room else 0,
+        'comment': self.guest_info[guest]['comment'],
+        'возраст': self.guest_info[guest]['age'],
+        'пол': self.guest_info[guest]['gender'],
+        'должность': self.guest_info[guest]['position'],
+        'город': self.guest_info[guest]['city'],
+        'организация': self.guest_info[guest]['organization'],
+        'тариф': self.guest_info[guest]['tariff'],
+        'число_ночей': self.guest_info[guest]['nights'],
+        'стоимость': self.guest_info[guest]['cost']
+    })
         allocations.append({
             'ФИО': guest,
             'room_id': room['room_id'] if room else 'нет мест',
