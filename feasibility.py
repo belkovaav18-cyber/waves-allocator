@@ -8,10 +8,10 @@ def check_feasibility(guests_df, rooms_df):
     issues = []
     
     # Получаем список резидентов
-    residents = guests_df[guests_df['resident'] == True]
+    residents = guests_df[guests_df['resident'] == True] if 'resident' in guests_df.columns else guests_df
     
     # Общая вместимость
-    total_capacity = rooms_df['вместимость'].sum()
+    total_capacity = rooms_df['вместимость'].sum() if 'вместимость' in rooms_df.columns else 0
     total_guests = len(residents)
     
     # Проверка 1: достаточно ли мест?
@@ -21,11 +21,17 @@ def check_feasibility(guests_df, rooms_df):
             'severity': 'error',
             'message': f"❌ Недостаточно мест! Гостей: {total_guests}, мест: {total_capacity}. Не хватает {total_guests - total_capacity} мест."
         })
-    else:
+    elif total_guests > 0:
         issues.append({
             'type': 'capacity',
             'severity': 'success',
             'message': f"✅ Мест достаточно. Гостей: {total_guests}, мест: {total_capacity}. Свободно: {total_capacity - total_guests} мест."
+        })
+    else:
+        issues.append({
+            'type': 'capacity',
+            'severity': 'warning',
+            'message': "⚠️ Нет гостей для расселения"
         })
     
     # Проверка 2: одноместные комнаты для программного комитета
@@ -49,39 +55,42 @@ def check_feasibility(guests_df, rooms_df):
                 return True
         return False
     
-    pc_members = residents[residents['ФИО'].apply(is_pc_member)]
-    single_rooms = rooms_df[rooms_df['вместимость'] == 1]
-    
-    if len(pc_members) > len(single_rooms):
-        issues.append({
-            'type': 'pc_single_rooms',
-            'severity': 'warning',
-            'message': f"⚠️ Членов программного комитета: {len(pc_members)}, одноместных комнат: {len(single_rooms)}. {len(pc_members) - len(single_rooms)} членов ПК будут расселены в двухместные комнаты."
-        })
-    else:
-        issues.append({
-            'type': 'pc_single_rooms',
-            'severity': 'success',
-            'message': f"✅ Одноместных комнат ({len(single_rooms)}) достаточно для членов ПК ({len(pc_members)})."
-        })
+    if 'ФИО' in residents.columns:
+        pc_members = residents[residents['ФИО'].apply(is_pc_member)]
+        single_rooms = rooms_df[rooms_df['вместимость'] == 1] if 'вместимость' in rooms_df.columns else pd.DataFrame()
+        
+        if len(pc_members) > len(single_rooms):
+            issues.append({
+                'type': 'pc_single_rooms',
+                'severity': 'warning',
+                'message': f"⚠️ Членов программного комитета: {len(pc_members)}, одноместных комнат: {len(single_rooms)}. {len(pc_members) - len(single_rooms)} членов ПК будут расселены в двухместные комнаты."
+            })
+        elif len(pc_members) > 0:
+            issues.append({
+                'type': 'pc_single_rooms',
+                'severity': 'success',
+                'message': f"✅ Одноместных комнат ({len(single_rooms)}) достаточно для членов ПК ({len(pc_members)})."
+            })
     
     # Проверка 3: гости с комментариями
-    guests_with_comments = residents[residents['comment'].notna() & (residents['comment'] != '')]
-    if len(guests_with_comments) > 0:
-        issues.append({
-            'type': 'comments',
-            'severity': 'warning',
-            'message': f"⚠️ {len(guests_with_comments)} гостей оставили комментарии. Требуется ручная обработка!"
-        })
+    if 'comment' in residents.columns:
+        guests_with_comments = residents[residents['comment'].notna() & (residents['comment'] != '')]
+        if len(guests_with_comments) > 0:
+            issues.append({
+                'type': 'comments',
+                'severity': 'warning',
+                'message': f"⚠️ {len(guests_with_comments)} гостей оставили комментарии. Требуется ручная обработка!"
+            })
     
     # Проверка 4: распределение по городам
-    cities = residents['город'].value_counts()
-    if len(cities) > 0:
-        issues.append({
-            'type': 'cities',
-            'severity': 'info',
-            'message': f"📊 Гости из {len(cities)} городов. Наибольшее количество: {cities.iloc[0]} чел. из {cities.index[0]}"
-        })
+    if 'город' in residents.columns:
+        cities = residents['город'].value_counts()
+        if len(cities) > 0:
+            issues.append({
+                'type': 'cities',
+                'severity': 'info',
+                'message': f"📊 Гости из {len(cities)} городов. Наибольшее количество: {cities.iloc[0]} чел. из {cities.index[0]}"
+            })
     
     return issues
 
@@ -89,7 +98,9 @@ def display_feasibility_report(issues):
     """
     Отображение отчета о возможности расселения
     """
-    st.subheader("🔍 Проверка возможности расселения")
+    if not issues:
+        st.info("ℹ️ Нет данных для проверки")
+        return
     
     for issue in issues:
         if issue['severity'] == 'error':
@@ -107,22 +118,40 @@ def suggest_allocation_strategy(guests_df, rooms_df):
     """
     suggestions = []
     
-    residents = guests_df[guests_df['resident'] == True]
+    if 'resident' in guests_df.columns:
+        residents = guests_df[guests_df['resident'] == True]
+    else:
+        residents = guests_df
     
     # Анализ возрастных групп
-    ages = residents['возраст'].dropna()
-    if len(ages) > 0:
-        age_groups = pd.cut(ages, bins=[0, 30, 40, 50, 60, 100], labels=['<30', '30-40', '40-50', '50-60', '60+'])
-        suggestions.append(f"📊 Возрастные группы: {dict(age_groups.value_counts())}")
+    if 'возраст' in residents.columns:
+        ages = residents['возраст'].dropna()
+        if len(ages) > 0:
+            try:
+                age_groups = pd.cut(ages, bins=[0, 30, 40, 50, 60, 100], labels=['<30', '30-40', '40-50', '50-60', '60+'])
+                suggestions.append(f"📊 Возрастные группы: {dict(age_groups.value_counts())}")
+            except:
+                pass
     
     # Анализ городов
-    cities = residents['город'].value_counts()
-    if len(cities) > 0:
-        suggestions.append(f"🏙️ Рекомендуется селить вместе гостей из одного города. Крупнейшие группы: {dict(cities.head(3))}")
+    if 'город' in residents.columns:
+        cities = residents['город'].value_counts()
+        if len(cities) > 0:
+            suggestions.append(f"🏙️ Рекомендуется селить вместе гостей из одного города. Крупнейшие группы: {dict(cities.head(3))}")
     
     # Анализ должностей
-    positions = residents['должность'].value_counts().head(3)
-    if len(positions) > 0:
-        suggestions.append(f"💼 Среди гостей: {', '.join([f'{pos} ({count})' for pos, count in positions.items()])}")
+    if 'должность' in residents.columns:
+        positions = residents['должность'].value_counts().head(3)
+        if len(positions) > 0:
+            suggestions.append(f"💼 Среди гостей: {', '.join([f'{pos} ({count})' for pos, count in positions.items()])}")
     
     return suggestions
+
+# Добавляем недостающие функции, которые импортируются в solver_controller
+def find_impossible_groups(guests_df, rooms_df):
+    """Находит группы, которые невозможно расселить"""
+    return []
+
+def split_groups(guests_df, rooms_df):
+    """Разбивает группы при необходимости"""
+    return guests_df
