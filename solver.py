@@ -1,7 +1,7 @@
 import pandas as pd
 import re
 from collections import defaultdict
-
+from comment_parser import comment_parser
 class RoomAllocator:
     def __init__(self, rooms, guests):
         self.rooms = rooms
