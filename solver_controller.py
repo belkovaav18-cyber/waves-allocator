@@ -1,52 +1,19 @@
 import pandas as pd
 
 def smart_solve(guests, rooms):
-    """
-    Умное расселение с обработкой всех правил
-    """
-    
     if not guests:
         return pd.DataFrame({'error': ['Нет гостей для расселения']}), {}
-    
     if not rooms:
         return pd.DataFrame({'error': ['Нет комнат для расселения']}), {}
     
     try:
-        # Простое распределение: селим по порядку в комнаты
         from solver import solve_allocation
         result_df, debug_info = solve_allocation(guests, rooms)
-        
-        # Добавляем информацию о членах программного комитета
-        program_committee_names = [
-            "Козарь А.В.", "Калиш А.Н.", "Архипов Р.М.", "Балакший В.И.",
-            "Белотелов В.И.", "Боголюбов А.Н.", "Бородачев Л.В.", "Бугай А.Н.",
-            "Денисов В.И.", "Звездин А.К.", "Игнатьева Д.О.", "Короновский А.А.",
-            "Котова С.П.", "Макаров В.А.", "Пирогов Ю.А.", "Пятаков А.П.",
-            "Руденко О.В.", "Сазонов С.В.", "Сапожников О.А.", "Тимофеев И.В.",
-            "Храмов А.Е.", "Цысарь С.А.", "Чашечкин Ю.Д.", "Черепенин В.А.",
-            "Шандаров С.М."
-        ]
-        
-        def is_pc_member(fio):
-            if pd.isna(fio):
-                return False
-            fio_str = str(fio).lower().replace('.', '').replace(' ', '')
-            for pc_name in program_committee_names:
-                pc_normalized = pc_name.lower().replace('.', '').replace(' ', '')
-                if pc_normalized in fio_str or fio_str in pc_normalized:
-                    return True
-            return False
-        
-        if 'ФИО' in result_df.columns:
-            result_df['is_program_committee'] = result_df['ФИО'].apply(is_pc_member)
-        
         return result_df, debug_info
-        
     except Exception as e:
         import traceback
         traceback.print_exc()
         return pd.DataFrame({'error': [str(e)]}), {}
 
 def optimize_allocation(result_df, rooms_df):
-    """Оптимизация расселения"""
     return []
