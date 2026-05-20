@@ -1,4 +1,5 @@
 import pandas as pd
+import streamlit as st
 from collections import defaultdict
 
 def check_feasibility(guests_df, rooms_df):
