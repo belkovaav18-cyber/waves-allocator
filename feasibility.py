@@ -1,52 +1,68 @@
-# feasibility.py
+import pandas as pd
+from collections import defaultdict
 
-def find_impossible_groups(guests, rooms):
+def check_feasibility(guests_df, rooms_df):
     """
-    Проверяет, есть ли группы, которые невозможно расселить
-    Возвращает список проблемных групп
+    Проверка возможности расселения
     """
-    impossible = []
+    issues = []
     
-    # Проверка: MUST_BE_SINGLE и наличие одноместных комнат
-    single_rooms = sum(1 for room in rooms if int(room.get("вместимость", 1)) == 1)
-    must_be_single = [g for g in guests if g.get("must_be_single_room", False)]
+    # Получаем список резидентов
+    residents = guests_df[guests_df['resident'] == True]
     
-    if len(must_be_single) > single_rooms:
-        impossible.append({
-            "type": "not_enough_single_rooms",
-            "count": len(must_be_single),
-            "available": single_rooms,
-            "people": [g["fio"] for g in must_be_single]
+    # Общая вместимость
+    total_capacity = rooms_df['вместимость'].sum()
+    total_guests = len(residents)
+    
+    # Проверка 1: достаточно ли мест?
+    if total_guests > total_capacity:
+        issues.append({
+            'type': 'capacity',
+            'severity': 'error',
+            'message': f"❌ Недостаточно мест! Гостей: {total_guests}, мест: {total_capacity}. Не хватает {total_guests - total_capacity} мест."
+        })
+    else:
+        issues.append({
+            'type': 'capacity',
+            'severity': 'success',
+            'message': f"✅ Мест достаточно. Гостей: {total_guests}, мест: {total_capacity}. Свободно: {total_capacity - total_guests} мест."
         })
     
-    # Проверка: FORCED_YELLOW и наличие комнат в желтом корпусе
-    yellow_rooms = sum(1 for room in rooms if str(room.get("room_id", "")).startswith(('2-', '2')))
-    must_be_yellow = [g for g in guests if g.get("preferred_building") == "yellow"]
+    # Проверка 2: одноместные комнаты для программного комитета
+    program_committee_names = [
+        "Козарь А.В.", "Калиш А.Н.", "Архипов Р.М.", "Балакший В.И.",
+        "Белотелов В.И.", "Боголюбов А.Н.", "Бородачев Л.В.", "Бугай А.Н.",
+        "Денисов В.И.", "Звездин А.К.", "Игнатьева Д.О.", "Короновский А.А.",
+        "Котова С.П.", "Макаров В.А.", "Пирогов Ю.А.", "Пятаков А.П.",
+        "Руденко О.В.", "Сазонов С.В.", "Сапожников О.А.", "Тимофеев И.В.",
+        "Храмов А.Е.", "Цысарь С.А.", "Чашечкин Ю.Д.", "Черепенин В.А.",
+        "Шандаров С.М."
+    ]
     
-    if len(must_be_yellow) > yellow_rooms:
-        impossible.append({
-            "type": "not_enough_yellow_rooms",
-            "count": len(must_be_yellow),
-            "available": yellow_rooms,
-            "people": [g["fio"] for g in must_be_yellow]
+    def is_pc_member(fio):
+        if pd.isna(fio):
+            return False
+        fio_str = str(fio).lower().replace('.', '').replace(' ', '')
+        for pc_name in program_committee_names:
+            pc_normalized = pc_name.lower().replace('.', '').replace(' ', '')
+            if pc_normalized in fio_str or fio_str in pc_normalized:
+                return True
+        return False
+    
+    pc_members = residents[residents['ФИО'].apply(is_pc_member)]
+    single_rooms = rooms_df[rooms_df['вместимость'] == 1]
+    
+    if len(pc_members) > len(single_rooms):
+        issues.append({
+            'type': 'pc_single_rooms',
+            'severity': 'warning',
+            'message': f"⚠️ Членов программного комитета: {len(pc_members)}, одноместных комнат: {len(single_rooms)}. {len(pc_members) - len(single_rooms)} членов ПК будут расселены в двухместные комнаты."
+        })
+    else:
+        issues.append({
+            'type': 'pc_single_rooms',
+            'severity': 'success',
+            'message': f"✅ Одноместных комнат ({len(single_rooms)}) достаточно для членов ПК ({len(pc_members)})."
         })
     
-    return impossible
-
-
-def split_groups(guests, rooms):
-    """
-    Разбивает группы на подгруппы при необходимости
-    """
-    # Если нет проблем, возвращаем исходный список
-    impossible = find_impossible_groups(guests, rooms)
-    if not impossible:
-        return guests
-    
-    # Создаем копию
-    fixed_guests = []
-    
-    for guest in guests:
-        fixed_guests.append(guest)
-    
-    return fixed_guests
+    # Проверка 3: гости с коммента
