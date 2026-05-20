@@ -5,6 +5,7 @@ from collections import defaultdict
 class RoomAllocator:
     def __init__(self, rooms, guests):
         self.rooms = rooms
+        self.guests = guests  # Добавляем атрибут guests
         self.room_capacity = {r['room_id']: r['вместимость'] for r in rooms}
         
         # Программный комитет
@@ -38,7 +39,7 @@ class RoomAllocator:
         
         # Предопределенные тройки
         self.triples = [
-            ['Вьюгинова Алена Александровна,',
+            ['Вьюгинова Алена Александровна (докладчик), Новик Александр Александрович (сопровожд.), Вьюгинов Сергей Николаевич (сопровожд.)',
              'Новик Александр Александрович', 'Вьюгинов Сергей Николаевич'],
             ['Толстых Алина Дмитриевна', 'Очкина Варвара Алексеевна', 'Манышева Анна Андреевна']
         ]
@@ -156,7 +157,7 @@ class RoomAllocator:
         
         # 1. Трешки
         for triple in self.triples:
-            guests = [g for g in triple if g in self.guest_info]
+            guests = [g for g in triple if g in self.guest_info and g not in allocated]
             if not guests:
                 continue
             
@@ -263,24 +264,11 @@ class RoomAllocator:
         allocate_group(male_by_city)
         allocate_group(female_by_city)
         
-        # 7. Нерезиденты
+        # 7. Нерезиденты - проходим по всем гостям
         for guest in self.guests:
             fio = guest.get('ФИО', '')
             if fio and fio not in [a['ФИО'] for a in allocations]:
-                allocations.append({
-                    'ФИО': fio,
-                    'room_id': 'не проживает',
-                    'room_capacity': 0,
-                    'comment': guest.get('comment', ''),
-                    'возраст': self.guest_info.get(fio, {}).get('age', 0),
-                    'пол': self.guest_info.get(fio, {}).get('gender', ''),
-                    'должность': self.guest_info.get(fio, {}).get('position', ''),
-                    'город': self.guest_info.get(fio, {}).get('city', ''),
-                    'организация': self.guest_info.get(fio, {}).get('organization', ''),
-                    'тариф': self.guest_info.get(fio, {}).get('tariff', 0),
-                    'число_ночей': self.guest_info.get(fio, {}).get('nights', 0),
-                    'стоимость': self.guest_info.get(fio, {}).get('cost', 0)
-                })
+                self._add_allocation(allocations, fio, None)
         
         return pd.DataFrame(allocations)
     
