@@ -1,121 +1,101 @@
-# solver_debug.py
-
-from ortools.sat.python import cp_model
 import pandas as pd
+from solver import solve_allocation
 
+def smart_solve(guests, rooms):
+    """
+    Умное расселение с обработкой всех правил
+    
+    Args:
+        guests: список гостей (словари)
+        rooms: список комнат (словари)
+    
+    Returns:
+        result_df: DataFrame с результатами расселения
+        debug_info: словарь с отладочной информацией
+    """
+    
+    # Проверяем входные данные
+    if not guests:
+        return pd.DataFrame({'error': ['Нет гостей для расселения']}), {}
+    
+    if not rooms:
+        return pd.DataFrame({'error': ['Нет комнат для расселения']}), {}
+    
+    # Создаем копии для работы
+    guests_list = guests.copy() if isinstance(guests, list) else guests.to_dict('records')
+    rooms_list = rooms.copy() if isinstance(rooms, list) else rooms.to_dict('records')
+    
+    # Запускаем алгоритм расселения
+    try:
+        result_df, debug_info = solve_allocation(guests_list, rooms_list)
+        
+        # Добавляем дополнительную информацию
+        if 'comment' in result_df.columns:
+            # Отмечаем гостей с комментариями
+            result_df['has_comment'] = result_df['comment'].apply(
+                lambda x: bool(x and str(x).strip() and str(x).strip() != 'nan')
+            )
+        
+        # Добавляем информацию о членах программного комитета
+        program_committee_names = [
+            "Козарь А.В.", "Калиш А.Н.", "Архипов Р.М.", "Балакший В.И.",
+            "Белотелов В.И.", "Боголюбов А.Н.", "Бородачев Л.В.", "Бугай А.Н.",
+            "Денисов В.И.", "Звездин А.К.", "Игнатьева Д.О.", "Короновский А.А.",
+            "Котова С.П.", "Макаров В.А.", "Пирогов Ю.А.", "Пятаков А.П.",
+            "Руденко О.В.", "Сазонов С.В.", "Сапожников О.А.", "Тимофеев И.В.",
+            "Храмов А.Е.", "Цысарь С.А.", "Чашечкин Ю.Д.", "Черепенин В.А.",
+            "Шандаров С.М."
+        ]
+        
+        def is_pc_member(fio):
+            for pc_name in program_committee_names:
+                if pc_name.lower().replace('.', '').replace(' ', '') in str(fio).lower().replace('.', '').replace(' ', ''):
+                    return True
+            return False
+        
+        result_df['is_program_committee'] = result_df['fio'].apply(is_pc_member)
+        
+        return result_df, debug_info
+        
+    except Exception as e:
+        return pd.DataFrame({'error': [str(e)]}), {}
 
-def solve_simple(guests, rooms):
-    """Упрощенная версия солвера для отладки"""
+def optimize_allocation(result_df, rooms_df):
+    """
+    Оптимизация расселения после первоначального распределения
+    """
+    # Создаем словарь занятости комнат
+    room_occupancy = {}
+    for _, row in result_df.iterrows():
+        room_id = row.get('room_id')
+        if room_id and room_id != 'не проживает' and room_id != 'нет мест' and room_id != 'требуется ручная обработка':
+            if room_id not in room_occupancy:
+                room_occupancy[room_id] = []
+            room_occupancy[room_id].append(row['fio'])
     
-    model = cp_model.CpModel()
+    # Создаем словарь вместимости комнат
+    room_capacity = {r['room_id']: r['вместимость'] for r in rooms_df.to_dict('records')}
     
-    G = range(len(guests))
-    R = range(len(rooms))
+    # Ищем возможности для оптимизации
+    optimizations = []
     
-    x = {}
-    
-    # Переменные
-    for g in G:
-        for r in R:
-            x[g, r] = model.NewBoolVar(f"x_{g}_{r}")
-    
-    # Один гость - одна комната
-    for g in G:
-        model.Add(sum(x[g, r] for r in R) == 1)
-    
-    # Вместимость
-    for r in R:
-        cap = int(rooms[r]["вместимость"])
-        model.Add(sum(x[g, r] for g in G) <= cap)
-    
-    objective = []
-    
-    # Только самые важные ограничения
-    
-    # 1. MUST_BE_SINGLE
-    for g in G:
-        if guests[g].get("must_be_single_room", False):
-            for r in R:
-                if int(rooms[r]["вместимость"]) != 1:
-                    model.Add(x[g, r] == 0)
-    
-    # 2. FORCED YELLOW
-    def get_building(room_id):
-        room_str = str(room_id)
-        if '-' in room_str:
-            building = room_str.split('-')[0]
-            if building.isdigit():
-                return int(building)
-        return None
-    
-    for g in G:
-        if guests[g].get("preferred_building") == "yellow":
-            for r in R:
-                building = get_building(rooms[r]["room_id"])
-                if building != 2:
-                    model.Add(x[g, r] == 0)
-    
-    # 3. TOGETHER GROUPS
-    for g in G:
-        for other_fio in guests[g].get("group_hard", []):
-            if other_fio in ["NO_SUBLEASE", "MUST_BE_SINGLE"]:
-                continue
-            for h in G:
-                if guests[h]["fio"] != other_fio:
-                    continue
-                for r in R:
-                    model.Add(x[g, r] == x[h, r])
-    
-    # 4. NO SUBLEASE
-    for g in G:
-        if guests[g].get("require_no_subleaser", False):
-            for r in R:
-                cap = int(rooms[r]["вместимость"])
-                if cap == 2:
-                    # Эта комната может содержать только этого гостя
-                    model.Add(sum(x[k, r] for k in G) <= 1).OnlyEnforceIf(x[g, r])
-    
-    # Минимизируем
-    model.Minimize(sum(objective))
-    
-    # Решаем
-    solver = cp_model.CpSolver()
-    solver.parameters.max_time_in_seconds = 30
-    status = solver.Solve(model)
-    
-    if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-        print("No solution found!")
+    for room_id, occupants in room_occupancy.items():
+        capacity = room_capacity.get(room_id, 2)
         
-        # Проверяем, какие ограничения делают задачу нерешаемой
-        yellow_forced = sum(1 for g in guests if g.get("preferred_building") == "yellow")
-        single_required = sum(1 for g in guests if g.get("must_be_single_room", False))
-        no_subleaser = sum(1 for g in guests if g.get("require_no_subleaser", False))
-        
-        yellow_rooms = sum(1 for r in rooms if str(r.get("room_id", "")).startswith(('2-', '2')))
-        single_rooms = sum(1 for r in rooms if int(r.get("вместимость", 1)) == 1)
-        
-        # Проверяем возможность решения
-        error_msg = ""
-        if yellow_forced > yellow_rooms:
-            error_msg = f"Недостаточно комнат в желтом корпусе: требуется {yellow_forced}, доступно {yellow_rooms}"
-        elif single_required > single_rooms:
-            error_msg = f"Недостаточно одноместных комнат: требуется {single_required}, доступно {single_rooms}"
-        elif no_subleaser > (len(rooms) * 2):  # Примерная оценка
-            error_msg = f"Слишком много гостей с тарифом 'без подселения': {no_subleaser}"
-        else:
-            error_msg = f"Невозможно найти решение. Желтый корпус: {yellow_forced}/{yellow_rooms}, Одноместные: {single_required}/{single_rooms}"
-        
-        print(f"Error: {error_msg}")
-        return pd.DataFrame([{"error": error_msg}])
+        # Если комната заполнена не полностью
+        if len(occupants) < capacity:
+            # Ищем гостей, которых можно сюда добавить
+            for _, row in result_df.iterrows():
+                other_room = row.get('room_id')
+                if other_room and other_room != room_id and other_room != 'не проживает':
+                    # Проверяем, можно ли переместить
+                    other_occupants = room_occupancy.get(other_room, [])
+                    if len(other_occupants) > 1:
+                        optimizations.append({
+                            'guest': row['fio'],
+                            'from_room': other_room,
+                            'to_room': room_id,
+                            'reason': f'Оптимизация заполнения комнаты {room_id}'
+                        })
     
-    result = []
-    for g in G:
-        for r in R:
-            if solver.Value(x[g, r]):
-                result.append({
-                    "fio": guests[g]["fio"],
-                    "room_id": rooms[r]["room_id"],
-                    "room_capacity": rooms[r]["вместимость"]
-                })
-    
-    return pd.DataFrame(result)
+    return optimizations
